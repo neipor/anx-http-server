@@ -6,8 +6,11 @@ LDFLAGS = -static
 BUILD_DIR = build
 TARGET = $(BUILD_DIR)/anx_asm_demo
 
-SRCS = src/server.s
-OBJS = $(SRCS:src/%.s=$(BUILD_DIR)/%.o)
+# Find all assembly source files
+SRCS = $(wildcard src/*.s)
+# Exclude defs.s because it is included via .include, not linked
+LINK_SRCS = $(filter-out src/defs.s, $(SRCS))
+OBJS = $(LINK_SRCS:src/%.s=$(BUILD_DIR)/%.o)
 
 .PHONY: all clean
 
