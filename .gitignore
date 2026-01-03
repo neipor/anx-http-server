@@ -1,0 +1,21 @@
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Logs
+*.log
+logs/
+
+# Runtime files
+*.pid
+*.conf
+*.swp
+*.swo
+
+# Temporary
+tmp/
+*.bak
+*.old
