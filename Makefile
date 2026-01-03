@@ -1,23 +1,26 @@
-# Makefile for Pure Assembly Project
-
 AS = as
 LD = ld
 ASFLAGS = -g
 LDFLAGS = -static
 
-TARGET = anx_asm_demo
+BUILD_DIR = build
+TARGET = $(BUILD_DIR)/anx_asm_demo
+
 SRCS = src/server.s
-OBJS = $(SRCS:.s=.o)
+OBJS = $(SRCS:src/%.s=$(BUILD_DIR)/%.o)
 
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(BUILD_DIR) $(TARGET)
+
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
 $(TARGET): $(OBJS)
 	$(LD) $(LDFLAGS) -o $@ $^
 
-%.o: %.s
+$(BUILD_DIR)/%.o: src/%.s | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -rf $(BUILD_DIR)
