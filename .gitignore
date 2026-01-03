@@ -1,17 +1,8 @@
-# Build artifacts
 build/
-
-# Logs
-*.log
-logs/
-
-# Runtime files
-*.pid
-*.conf
-*.swp
-*.swo
-
-# Temporary
-tmp/
-*.bak
-*.old
+*.o
+*.a
+server.log
+server.log.*
+server.pid
+monitor.log
+nohup.out
