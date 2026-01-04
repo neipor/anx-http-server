@@ -9,11 +9,14 @@
 .equ SYS_WRITE, 64
 .equ SYS_SENDFILE, 71
 .equ SYS_EXIT, 93
+.equ SYS_RT_SIGACTION, 134
 .equ SYS_SOCKET, 198
 .equ SYS_BIND, 200
 .equ SYS_LISTEN, 201
 .equ SYS_ACCEPT, 202
 .equ SYS_SETSOCKOPT, 208
+.equ SYS_CLONE, 220
+.equ SYS_WAIT4, 260
 
 /* Constants */
 .equ STDIN, 0
@@ -32,3 +35,10 @@
 /* Dirent Type */
 .equ DT_REG, 8
 .equ DT_DIR, 4
+
+/* Signals */
+.equ SIGCHLD, 17
+.equ SIG_IGN, 1
+
+/* Clone Flags */
+.equ SIGCHLD_FLAG, 17     /* Exit signal for clone */

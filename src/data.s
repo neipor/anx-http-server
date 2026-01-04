@@ -26,6 +26,7 @@
 .global file_path
 .global num_buffer
 .global config_buffer
+.global act
 
 .global mime_html
 .global mime_css
@@ -138,3 +139,6 @@
     file_path:      .skip 512
     num_buffer:     .skip 32
     config_buffer:  .skip 4096
+    
+    .align 4
+    act:            .skip 152   /* sizeof(struct sigaction) approx */

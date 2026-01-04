@@ -9,6 +9,26 @@
 
 /* server_init() -> listen_fd */
 server_init:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    stp x19, x20, [sp, #-16]!
+
+    /* 0. Ignore SIGCHLD to prevent zombies */
+    ldr x0, =act
+    mov x1, #1              /* SIG_IGN */
+    str x1, [x0]            /* sa_handler */
+    mov x1, #0              /* flags (0) */
+    str x1, [x0, #8]        /* sa_flags */
+    str xzr, [x0, #16]      /* sa_restorer */
+    str xzr, [x0, #24]      /* sa_mask */
+    
+    mov x0, SIGCHLD
+    ldr x1, =act
+    mov x2, #0              /* oldact */
+    mov x3, #8              /* sigsetsize */
+    mov x8, SYS_RT_SIGACTION
+    svc #0
+    
     /* 1. Socket */
     mov x0, AF_INET
     mov x1, SOCK_STREAM
@@ -45,6 +65,9 @@ server_init:
     svc #0
     
     mov x0, x19             /* Return listen_fd */
+    
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
     ret
 
 /* accept_loop(listen_fd) */
@@ -57,10 +80,44 @@ ac_loop_start:
     mov x2, #0
     mov x8, SYS_ACCEPT
     svc #0
+    
+    cmp x0, #0
+    blt ac_loop_start       /* Error? Try again */
+    
     mov x20, x0             /* x20 = client_fd */
     
-    /* Call HTTP handler */
+    /* Fork (Clone) */
+    mov x0, SIGCHLD_FLAG    /* flags = SIGCHLD */
+    mov x1, #0              /* stack = 0 (COW) */
+    mov x2, #0              /* ptid */
+    mov x3, #0              /* tls */
+    mov x4, #0              /* ctid */
+    mov x8, SYS_CLONE
+    svc #0
+    
+    cmp x0, #0
+    beq is_child
+    
+    /* Parent */
+    /* Close client_fd */
+    mov x0, x20
+    mov x8, SYS_CLOSE
+    svc #0
+    
+    b ac_loop_start
+
+is_child:
+    /* Child */
+    /* Close listen_fd */
+    mov x0, x19
+    mov x8, SYS_CLOSE
+    svc #0
+    
+    /* Handle Client */
     mov x0, x20
     bl handle_client
     
-    b ac_loop_start
+    /* Exit Child */
+    mov x0, #0
+    mov x8, SYS_EXIT
+    svc #0
