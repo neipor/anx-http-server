@@ -5,6 +5,7 @@
 .global strlen
 .global strcmp
 .global strstr
+.global get_extension
 .global atoi
 .global itoa
 .global htons
@@ -51,16 +52,24 @@ sl_loop:
 
 /* strcmp(s1, s2) -> 0 if eq */
 strcmp:
-    ldrb w2, [x0], #1
-    ldrb w3, [x1], #1
+    mov x4, x0  /* save s1 */
+    mov x5, x1  /* save s2 */
+scmp_loop:
+    ldrb w2, [x4], #1
+    ldrb w3, [x5], #1
     cmp w2, #0
-    beq scmp_done
+    beq scmp_check_end
     cmp w2, w3
-    beq strcmp
+    bne scmp_diff
+    b scmp_loop
+scmp_check_end:
+    cmp w3, #0
+    beq scmp_eq
+scmp_diff:
     sub x0, x2, x3
     ret
-scmp_done:
-    sub x0, x2, x3
+scmp_eq:
+    mov x0, #0
     ret
 
 /* strstr(haystack, needle) -> ptr or NULL */
@@ -109,6 +118,26 @@ strstr_not_found:
     mov x0, #0
 strstr_exit:
     ldp x19, x20, [sp], #16
+    ret
+
+/* get_extension(filename) -> ptr to dot or NULL */
+get_extension:
+    mov x1, x0      /* current ptr */
+    mov x2, #0      /* last dot ptr */
+ge_loop:
+    ldrb w3, [x1]
+    cmp w3, #0
+    beq ge_done
+    cmp w3, #'.'
+    beq ge_found_dot
+    add x1, x1, #1
+    b ge_loop
+ge_found_dot:
+    mov x2, x1
+    add x1, x1, #1
+    b ge_loop
+ge_done:
+    mov x0, x2
     ret
 
 /* atoi(str) -> int */

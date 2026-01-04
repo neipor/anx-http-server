@@ -8,8 +8,29 @@
 
 /* handle_client(client_fd) */
 handle_client:
-    stp x29, x30, [sp, #-16]!
-    stp x20, x21, [sp, #-16]!
+    stp x29, x30, [sp, #-48]! /* Allocate 48 bytes */
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    str x23, [sp, #48]        /* Wait, offset 48 is out of bounds if size is 48 (0-47) */
+    
+    /* Correct alignment: 
+       sp -> [x29, x30] (0-15)
+             [x19, x20] (16-31)
+             [x21, x22] (32-47)
+             [x23, padding] (48-63)
+       Total alloc: 64 bytes
+    */
+    
+    add sp, sp, #48           /* Restore SP first? No. Re-do logic */
+    
+    /* New Prologue */
+    stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    str x23, [sp, #48]
+
     mov x20, x0             /* x20 = client_fd */
     
     /* Read Request */
@@ -101,14 +122,90 @@ open_file:
     mov x8, SYS_LSEEK
     svc #0
     
-    /* Send 200 Header */
+    /* Determine MIME Type */
+    ldr x0, =file_path
+    bl get_extension
+    cmp x0, #0
+    beq set_mime_plain      /* No extension -> plain */
+    
+    /* Compare Extensions */
+    mov x19, x0             /* Save ext ptr */
+    
+    mov x0, x19
+    ldr x1, =ext_html
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_html
+    
+    mov x0, x19
+    ldr x1, =ext_css
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_css
+    
+    mov x0, x19
+    ldr x1, =ext_js
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_js
+
+    mov x0, x19
+    ldr x1, =ext_png
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_png
+    
+    mov x0, x19
+    ldr x1, =ext_jpg
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_jpg
+    
+    b set_mime_plain
+
+set_mime_html:
+    ldr x23, =mime_html
+    b send_response
+set_mime_css:
+    ldr x23, =mime_css
+    b send_response
+set_mime_js:
+    ldr x23, =mime_js
+    b send_response
+set_mime_png:
+    ldr x23, =mime_png
+    b send_response
+set_mime_jpg:
+    ldr x23, =mime_jpg
+    b send_response
+set_mime_plain:
+    ldr x23, =mime_plain
+
+send_response:
+    /* Send 200 Start */
     mov x0, x20
-    ldr x1, =http_200
-    ldr x2, =len_200
+    ldr x1, =http_200_start
+    ldr x2, =len_200_start
     mov x8, SYS_WRITE
     svc #0
     
-    /* Send Size */
+    /* Send MIME String */
+    mov x0, x23             /* MIME string */
+    bl strlen               /* Calc MIME len */
+    mov x2, x0              /* Length */
+    mov x1, x23             /* RELOAD Buffer (MIME string) - Critical Fix */
+    mov x0, x20             /* fd */
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Send Content-Length Header Part */
+    mov x0, x20
+    ldr x1, =http_content_len
+    ldr x2, =len_content_len
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Send Size Value */
     mov x0, x22
     ldr x1, =num_buffer
     bl itoa
@@ -118,7 +215,7 @@ open_file:
     mov x8, SYS_WRITE
     svc #0
     
-    /* Send Header End */
+    /* Send Header End (CRLF CRLF) */
     mov x0, x20
     ldr x1, =http_end
     mov x2, #4
@@ -126,7 +223,6 @@ open_file:
     svc #0
     
     /* Send File (sendfile) */
-    /* sendfile(out_fd, in_fd, offset, count) */
     mov x0, x20
     mov x1, x21
     mov x2, #0              /* offset = NULL */
@@ -153,6 +249,8 @@ hc_close:
     mov x8, SYS_CLOSE
     svc #0
     
-    ldp x20, x21, [sp], #16
-    ldp x29, x30, [sp], #16
+    ldr x23, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #64
     ret

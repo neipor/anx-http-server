@@ -17,7 +17,8 @@
 .global flag_p
 .global flag_d
 .global flag_c
-.global http_200, len_200
+.global http_200_start, len_200_start
+.global http_content_len, len_content_len
 .global http_end
 .global http_404, len_404
 .global index_file
@@ -25,6 +26,19 @@
 .global file_path
 .global num_buffer
 .global config_buffer
+
+.global mime_html
+.global mime_css
+.global mime_js
+.global mime_png
+.global mime_jpg
+.global mime_plain
+
+.global ext_html
+.global ext_css
+.global ext_js
+.global ext_png
+.global ext_jpg
 
 .data
     /* Defaults */
@@ -70,13 +84,32 @@
     flag_d:         .asciz "-d"
     flag_c:         .asciz "-c"
 
-    /* HTTP Headers */
-    http_200:       .ascii "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: "
-    len_200 = . - http_200
+    /* HTTP Headers Parts */
+    http_200_start: .ascii "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: "
+    len_200_start = . - http_200_start
+    
+    http_content_len: .ascii "\r\nContent-Length: "
+    len_content_len = . - http_content_len
+    
     http_end:       .ascii "\r\n\r\n"
     
     http_404:       .ascii "HTTP/1.1 404 Not Found\r\nContent-Length: 13\r\nConnection: close\r\n\r\n404 Not Found"
     len_404 = . - http_404
+
+    /* MIME Types */
+    mime_html:      .asciz "text/html"
+    mime_css:       .asciz "text/css"
+    mime_js:        .asciz "application/javascript"
+    mime_png:       .asciz "image/png"
+    mime_jpg:       .asciz "image/jpeg"
+    mime_plain:     .asciz "text/plain"
+    
+    /* Extensions */
+    ext_html:       .asciz ".html"
+    ext_css:        .asciz ".css"
+    ext_js:         .asciz ".js"
+    ext_png:        .asciz ".png"
+    ext_jpg:        .asciz ".jpg"
 
     index_file:     .asciz "/index.html"
 
