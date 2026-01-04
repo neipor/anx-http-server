@@ -40,6 +40,12 @@
 .global ext_png
 .global ext_jpg
 
+.global dir_html_start, len_dir_start
+.global dir_html_end, len_dir_end
+.global li_start, len_li_start
+.global li_mid, len_li_mid
+.global li_end, len_li_end
+
 .data
     /* Defaults */
     default_port:   .hword 0x901f       /* 8080 (Big Endian) */
@@ -111,6 +117,19 @@
     ext_png:        .asciz ".png"
     ext_jpg:        .asciz ".jpg"
 
+    /* Directory Listing */
+    dir_html_start: .ascii "<html><head><title>Directory Listing</title></head><body><h1>Directory Listing</h1><ul>"
+    len_dir_start = . - dir_html_start
+    dir_html_end:   .ascii "</ul></body></html>"
+    len_dir_end = . - dir_html_end
+    
+    li_start:       .ascii "<li><a href=\""
+    len_li_start = . - li_start
+    li_mid:         .ascii "\">"
+    len_li_mid = . - li_mid
+    li_end:         .ascii "</a></li>"
+    len_li_end = . - li_end
+    
     index_file:     .asciz "/index.html"
 
 .bss
