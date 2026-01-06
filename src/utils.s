@@ -1,5 +1,7 @@
 /* src/utils.s - String & Math Utilities */
 
+.include "src/defs.s"
+
 .global strcpy
 .global strcat
 .global strlen
@@ -10,17 +12,34 @@
 .global itoa
 .global htons
 .global ntohs
+.global log_request
 
 .text
 
-/* strcpy(dest, src) */
+/* strcpy(dest, src) - 4-way unrolled */
 strcpy:
     mov x2, x0
 scp_loop:
     ldrb w3, [x1], #1
     strb w3, [x2], #1
     cmp w3, #0
+    beq scp_done
+    
+    ldrb w3, [x1], #1
+    strb w3, [x2], #1
+    cmp w3, #0
+    beq scp_done
+    
+    ldrb w3, [x1], #1
+    strb w3, [x2], #1
+    cmp w3, #0
+    beq scp_done
+    
+    ldrb w3, [x1], #1
+    strb w3, [x2], #1
+    cmp w3, #0
     bne scp_loop
+scp_done:
     ret
 
 /* strcat(dest, src) */
@@ -33,19 +52,52 @@ sct_find_end:
     add x2, x2, #1
     b sct_find_end
 sct_copy:
+    /* Reuse unrolled copy logic manually for speed */
+sct_loop:
     ldrb w3, [x1], #1
     strb w3, [x2], #1
     cmp w3, #0
-    bne sct_copy
+    beq sct_done
+    
+    ldrb w3, [x1], #1
+    strb w3, [x2], #1
+    cmp w3, #0
+    beq sct_done
+    
+    ldrb w3, [x1], #1
+    strb w3, [x2], #1
+    cmp w3, #0
+    beq sct_done
+    
+    ldrb w3, [x1], #1
+    strb w3, [x2], #1
+    cmp w3, #0
+    bne sct_loop
+sct_done:
     ret
 
-/* strlen(str) -> len */
+/* strlen(str) -> len - 4-way unrolled */
 strlen:
     mov x1, x0
 sl_loop:
     ldrb w2, [x1], #1
     cmp w2, #0
+    beq sl_end_1
+    
+    ldrb w2, [x1], #1
+    cmp w2, #0
+    beq sl_end_1
+    
+    ldrb w2, [x1], #1
+    cmp w2, #0
+    beq sl_end_1
+    
+    ldrb w2, [x1], #1
+    cmp w2, #0
     bne sl_loop
+    
+    /* Found at 4th byte (offset 3 from start of loop iteration) */
+sl_end_1:
     sub x0, x1, x0
     sub x0, x0, #1
     ret
@@ -204,4 +256,280 @@ htons:
 /* ntohs(short) -> short */
 ntohs:
     rev16 w0, w0
+    ret
+
+.global ip_to_str
+.global get_time_str
+.global log_request
+
+.text
+
+/* ip_to_str(uint32 ip, char* buf) */
+ip_to_str:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    
+    mov x19, x0     /* IP */
+    mov x20, x1     /* Buf */
+    
+    /* Byte 0 */
+    and w0, w19, #0xFF
+    mov x1, x20
+    bl itoa
+    add x20, x20, x0
+    
+    mov w2, #'.'
+    strb w2, [x20], #1
+    
+    /* Byte 1 */
+    lsr w0, w19, #8
+    and w0, w0, #0xFF
+    mov x1, x20
+    bl itoa
+    add x20, x20, x0
+    
+    mov w2, #'.'
+    strb w2, [x20], #1
+    
+    /* Byte 2 */
+    lsr w0, w19, #16
+    and w0, w0, #0xFF
+    mov x1, x20
+    bl itoa
+    add x20, x20, x0
+    
+    mov w2, #'.'
+    strb w2, [x20], #1
+    
+    /* Byte 3 */
+    lsr w0, w19, #24
+    and w0, w0, #0xFF
+    mov x1, x20
+    bl itoa
+    add x20, x20, x0
+    
+    mov w2, #0
+    strb w2, [x20]
+    
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+/* get_time_str(char* buf) */
+get_time_str:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    
+    mov x19, x1     /* buf */
+    
+    /* clock_gettime(0, &timespec) */
+    mov x0, #0      /* CLOCK_REALTIME */
+    ldr x1, =timespec
+    mov x8, #113    /* SYS_CLOCK_GETTIME */
+    svc #0
+    
+    ldr x1, =timespec
+    ldr x0, [x1]    /* tv_sec */
+    
+    /* Calculate HH:MM:SS */
+    /* Day seconds = 86400 */
+    ldr x2, =86400
+    udiv x3, x0, x2
+    msub x0, x3, x2, x0 /* x0 = sec % 86400 */
+    
+    /* Hour = x0 / 3600 */
+    mov x2, #3600
+    udiv x4, x0, x2     /* x4 = HH */
+    msub x0, x4, x2, x0 /* x0 = rem */
+    
+    /* Min = x0 / 60 */
+    mov x2, #60
+    udiv x5, x0, x2     /* x5 = MM */
+    msub x6, x5, x2, x0 /* x6 = SS */
+    
+    /* Format into buf "[HH:MM:SS] " */
+    mov x20, x19
+    
+    mov w2, #'['
+    strb w2, [x20], #1
+    
+    /* HH */
+    mov x0, x4
+    bl append_2digits
+    
+    mov w2, #':'
+    strb w2, [x20], #1
+    
+    /* MM */
+    mov x0, x5
+    bl append_2digits
+    
+    mov w2, #':'
+    strb w2, [x20], #1
+    
+    /* SS */
+    mov x0, x6
+    bl append_2digits
+    
+    mov w2, #']'
+    strb w2, [x20], #1
+    mov w2, #' '
+    strb w2, [x20], #1
+    mov w2, #0
+    strb w2, [x20]
+    
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+append_2digits:
+    /* x0 = val, x20 = buf ptr. updates x20 */
+    cmp x0, #10
+    bge a2d_ok
+    mov w2, #'0'
+    strb w2, [x20], #1
+a2d_ok:
+    stp x29, x30, [sp, #-16]!
+    mov x1, x20
+    bl itoa
+    add x20, x20, x0
+    ldp x29, x30, [sp], #16
+    ret
+
+/* log_request(method_ptr, path_ptr, status_code_int) */
+log_request:
+    /* Check Silent Mode */
+    ldr x3, =is_silent
+    ldr w3, [x3]
+    cmp w3, #1
+    beq log_exit
+
+    stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    str x23, [sp, #48]
+    
+    mov x19, x0     /* method */
+    mov x20, x1     /* path */
+    mov x21, x2     /* status code */
+    
+    ldr x22, =log_buffer /* Current ptr */
+    
+    /* 1. Time "[HH:MM:SS] " */
+    ldr x1, =time_buffer
+    bl get_time_str
+    
+    mov x0, x22
+    ldr x1, =time_buffer
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* 2. Log Prefix (Color) "[ACCESS]" */
+    mov x0, x22
+    ldr x1, =log_info_prefix
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    mov w0, #' '
+    strb w0, [x22], #1
+    
+    /* 3. IP Address */
+    mov x0, x22
+    ldr x1, =client_ip_str
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    mov w0, #' '
+    strb w0, [x22], #1
+    
+    /* 4. Method */
+    mov x0, x22
+    mov x1, x19
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    mov w0, #' '
+    strb w0, [x22], #1
+    
+    /* 5. Path */
+    mov x0, x22
+    mov x1, x20
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* 6. Arrow " -> " */
+    mov x0, x22
+    ldr x1, =txt_arrow
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* 7. Status Color */
+    mov x0, x21
+    cmp x0, #300
+    blt l_green
+    cmp x0, #400
+    blt l_yellow
+    b l_red
+l_green: ldr x1, =col_green
+    b l_col
+l_yellow: ldr x1, =col_yellow
+    b l_col
+l_red: ldr x1, =col_red
+l_col:
+    mov x0, x22
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* 8. Status Code */
+    mov x0, x21
+    mov x1, x22
+    bl itoa
+    add x22, x22, x0
+    
+    /* 9. Reset Color */
+    mov x0, x22
+    ldr x1, =col_reset
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* 10. Newline */
+    mov w0, #10
+    strb w0, [x22], #1
+    mov w0, #0
+    strb w0, [x22]
+    
+    /* ATOMIC WRITE */
+    mov x0, STDOUT
+    ldr x1, =log_buffer
+    mov x2, x22
+    sub x2, x2, x1  /* len = ptr - start */
+    mov x8, SYS_WRITE
+    svc #0
+    
+    ldr x23, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #64
+    ret
+
+log_exit:
     ret

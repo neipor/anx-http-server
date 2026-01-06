@@ -1,64 +1,65 @@
-# ANX AArch64 Pure Assembly Server
+# AArch64 Assembly HTTP Server
 
-A high-performance HTTP static file server written entirely in **AArch64 Assembly**.
+A high-performance, concurrent web server written entirely in AArch64 Assembly for Linux. No C library (libc), no external dependencies. Just raw syscalls.
 
 ## Features
-- **Zero Dependencies**: No C standard library (libc), no runtimes. Pure Linux Syscalls.
-- **Static Linking**: Compiled into a single, tiny static binary.
-- **High Performance**: Optimized for AArch64 architecture using `sendfile` for zero-copy transfer.
-- **Configuration**: Supports CLI arguments and configuration files.
-- **Log Management**: Includes a monitoring script with automatic log rotation.
 
-## Prerequisites
-- AArch64 (ARM64) Linux environment.
-- `as` (Assembler) and `ld` (Linker).
-- `make` build tool.
+- **Pure Assembly**: Written in GNU Assembler (GAS) for AArch64.
+- **Concurrent**: Uses `fork` (via `clone` syscall) to handle multiple clients simultaneously.
+- **Zero-Copy Serving**: Uses `sendfile` syscall for high-performance static file delivery.
+- **MIME Support**: Automatically detects and sets Content-Type for `.html`, `.css`, `.js`, `.png`, `.jpg`.
+- **Directory Listing**: Auto-generates HTML indexes for directories.
+- **Reverse Proxy**: Can forward requests to an upstream backend (IP-based).
+- **Configuration**: Supports CLI flags and a configuration file.
 
-## Build
+## Architecture
+
+- **`src/main.s`**: Entry point, argument parsing.
+- **`src/network.s`**: Socket creation, binding, listening, and connection handling.
+- **`src/http.s`**: HTTP request parsing, response generation, proxy logic.
+- **`src/utils.s`**: String manipulation, integer conversion, memory helpers.
+- **`src/config.s`**: Config file parser.
+- **`src/data.s`**: Global constants and buffers.
+
+## Usage
+
+### Build
 ```bash
 make
 ```
 
-## Usage
-
-### Basic Run
-Run the server in the background using the helper script (default port 8080):
+### Run
 ```bash
-./start_server.sh
+# Start on default port 8080 serving ./www
+./build/anx_asm_demo
+
+# Start on port 8099 serving /var/www
+./build/anx_asm_demo -p 8099 -d /var/www
+
+# Start with Config File
+./build/anx_asm_demo -c configs/anx.conf
 ```
 
-### CLI Arguments
-You can run the binary directly with arguments:
-- `-p <port>`: Set listening port (default: 8080).
-- `-d <dir>`: Set root directory for static files (default: `./www`).
-- `-c <file>`: Load configuration from file.
-
-**Example:**
+### Reverse Proxy Mode
+To enable the reverse proxy (forwarding to `127.0.0.1:9005`):
 ```bash
-./build/anx_asm_demo -p 9090 -d /var/www/html
+./build/anx_asm_demo -x
 ```
+Useful for forwarding requests to an application server (e.g., Python, Node.js).
 
-### Configuration File
-Create a config file (e.g., `my.conf`):
+## Configuration File (`anx.conf`)
 ```ini
 port=8080
 root=./www
 ```
-Run with config:
-```bash
-./build/anx_asm_demo -c my.conf
-```
-*Note: CLI arguments override config file settings.*
 
-## Architecture
-The server directly invokes Linux Kernel syscalls:
-- **Networking**: `socket`, `bind`, `listen`, `accept`, `setsockopt`.
-- **I/O**: `openat`, `read`, `write`, `close`.
-- **File Serving**: `sendfile` (Zero Copy), `lseek`.
-- **Process**: `exit`.
+## Syscalls Used
+- `socket`, `bind`, `listen`, `accept`, `connect`
+- `read`, `write`, `openat`, `close`
+- `sendfile`
+- `clone` (fork), `wait4` (via signal handling)
+- `getdents64`
+- `exit`
 
-## Directory Structure
-- `src/server.s`: Main assembly source code.
-- `www/`: Default web root directory.
-- `configs/`: Example configuration files.
-- `build/`: Build artifacts (ignored by git).
+## License
+MIT

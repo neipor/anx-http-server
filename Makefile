@@ -4,7 +4,7 @@ ASFLAGS = -g
 LDFLAGS = -static
 
 BUILD_DIR = build
-TARGET = $(BUILD_DIR)/anx_asm_demo
+TARGET = build/anx
 
 # Find all assembly source files
 SRCS = $(wildcard src/*.s)
