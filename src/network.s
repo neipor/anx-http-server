@@ -14,22 +14,6 @@ server_init:
     mov x29, sp
     stp x19, x20, [sp, #-16]!
 
-    /* 0. Ignore SIGCHLD to prevent zombies */
-    ldr x0, =act
-    mov x1, #1              /* SIG_IGN */
-    str x1, [x0]            /* sa_handler */
-    mov x1, #0              /* flags (0) */
-    str x1, [x0, #8]        /* sa_flags */
-    str xzr, [x0, #16]      /* sa_restorer */
-    str xzr, [x0, #24]      /* sa_mask */
-    
-    mov x0, SIGCHLD
-    ldr x1, =act
-    mov x2, #0              /* oldact */
-    mov x3, #8              /* sigsetsize */
-    mov x8, SYS_RT_SIGACTION
-    svc #0
-    
     /* 1. Socket */
     mov x0, AF_INET
     mov x1, SOCK_STREAM
@@ -59,9 +43,18 @@ server_init:
     mov x8, SYS_BIND
     svc #0
     
+    /* 3.5 TCP_DEFER_ACCEPT */
+    mov x0, x19
+    mov x1, IPPROTO_TCP
+    mov x2, TCP_DEFER_ACCEPT
+    ldr x3, =optval
+    mov x4, #4
+    mov x8, SYS_SETSOCKOPT
+    svc #0
+    
     /* 4. Listen */
     mov x0, x19
-    mov x1, #1024           /* Increased backlog */
+    mov x1, #4096           /* Max backlog */
     mov x8, SYS_LISTEN
     svc #0
     
@@ -99,58 +92,135 @@ spawn_workers:
     b spawn_workers
 
 monitor_children:
-    /* Parent Process: Just wait for signals (or implement restart logic later) */
-    /* For now, just pause forever to keep container alive */
-    mov x0, #0
-    mov x1, #0
-    mov x2, #0
-    mov x3, #0
+    /* Parent Process: Monitor and Respawn Workers */
+    
+    /* wait4(-1, NULL, 0, NULL) -> pid */
+    mov x0, #-1             /* -1 = wait for any child */
+    mov x1, #0              /* status = NULL */
+    mov x2, #0              /* options = 0 */
+    mov x3, #0              /* rusage = NULL */
     mov x8, SYS_WAIT4
-    svc #0
-    b monitor_children
-
-worker_routine:
-    /* Worker Process: Infinite Accept Loop */
-    
-worker_accept:
-    /* Allocate space for sockaddr */
-    sub sp, sp, #32
-    mov w2, #16
-    str w2, [sp]            /* addrlen = 16 */
-    
-    mov x0, x19             /* listen_fd */
-    add x1, sp, #16         /* sockaddr ptr */
-    mov x2, sp              /* addrlen ptr */
-    mov x8, SYS_ACCEPT
     svc #0
     
     cmp x0, #0
-    blt worker_accept_fail
+    ble monitor_children    /* If error or spurious wake, loop */
     
-    mov x20, x0             /* x20 = client_fd */
+    /* A child died (pid in x0). Respawn it! */
+    mov x20, #1             /* x20 = workers to spawn */
+    b spawn_workers
+
+worker_routine:
+    /* 1. Create Epoll Instance */
+    mov x0, #0              /* flags = 0 */
+    mov x8, SYS_EPOLL_CREATE1
+    svc #0
+    cmp x0, #0
+    blt worker_exit         /* Fatal error */
+    mov x21, x0             /* x21 = epoll_fd */
     
-    /* Capture IP (Worker local) */
+    /* 2. Add Listen Socket to Epoll with EPOLLEXCLUSIVE */
+    sub sp, sp, #16
+    ldr w0, =EPOLLEXCLUSIVE
+    orr w0, w0, #EPOLLIN
+    str w0, [sp]            /* events */
+    str x19, [sp, #8]       /* data.fd = listen_fd */
+    
+    mov x0, x21             /* epfd */
+    mov x1, EPOLL_CTL_ADD   /* op */
+    mov x2, x19             /* fd */
+    mov x3, sp              /* event ptr */
+    mov x8, SYS_EPOLL_CTL
+    svc #0
+    
+    add sp, sp, #16         /* restore stack */
+    
+epoll_loop:
+    /* 3. Epoll Wait */
+    mov x0, x21             /* epfd */
+    ldr x1, =epoll_events   /* events buffer */
+    mov x2, #32             /* maxevents */
+    mov x3, #-1             /* timeout = infinite */
+    mov x4, #0              /* sigmask = NULL */
+    mov x5, #0              /* sigsetsize = 0 */
+    mov x8, SYS_EPOLL_WAIT
+    svc #0
+    
+    cmp x0, #0
+    ble epoll_loop          /* Retry on error/timeout */
+    
+    mov x22, x0             /* x22 = num_events */
+    ldr x23, =epoll_events  /* x23 = current event ptr */
+    
+process_events:
+    cmp x22, #0
+    beq epoll_loop
+    
+    /* Load event data.fd (offset 8) */
+    ldr x24, [x23, #8]      /* x24 = event fd */
+    
+    /* Check if it is listen_fd */
+    cmp x24, x19
+    beq do_accept
+    
+    /* Otherwise it is client_fd -> Handle Request */
+    mov x0, x24
+    bl handle_client
+    b event_done
+
+do_accept:
+    /* Accept Loop using accept4 */
+    sub sp, sp, #32
+    mov w2, #16
+    str w2, [sp]            /* addrlen */
+    
+    mov x0, x19             /* listen_fd */
+    add x1, sp, #16         /* sockaddr */
+    mov x2, sp              /* addrlen ptr */
+    mov x3, #0              /* flags */
+    mov x8, SYS_ACCEPT4
+    svc #0
+    
+    cmp x0, #0
+    blt accept_fail
+    
+    mov x25, x0             /* x25 = client_fd */
+    
+    /* Capture IP */
     ldr w0, [sp, #20]
-    ldr x1, =client_ip_str  /* NOTE: In prefork, this is safe unless threaded (we are process) */
+    ldr x1, =client_ip_str
     bl ip_to_str
     
     add sp, sp, #32         /* Restore stack */
     
-    /* Handle Client (Blocking) */
-    mov x0, x20
-    bl handle_client
+    /* Add Client to Epoll */
+    sub sp, sp, #16
+    mov w0, EPOLLIN
+    str w0, [sp]
+    str x25, [sp, #8]       /* data.fd = client_fd */
     
-    /* Close Client */
-    /* handle_client already closes fd? Check http.s logic. */
-    /* http.s hc_close does close(client_fd). So we are good. */
+    mov x0, x21             /* epfd */
+    mov x1, EPOLL_CTL_ADD
+    mov x2, x25             /* fd */
+    mov x3, sp              /* event ptr */
+    mov x8, SYS_EPOLL_CTL
+    svc #0
     
-    /* Loop back to accept next connection */
-    b worker_accept
+    add sp, sp, #16
+    b event_done
 
-worker_accept_fail:
+accept_fail:
     add sp, sp, #32
-    /* If error is interrupt, retry. If fatal, maybe exit? Just retry for now */
-    b worker_accept
+    /* Fallthrough to event_done */
+
+event_done:
+    add x23, x23, #16       /* Next event */
+    sub x22, x22, #1
+    b process_events
+
+worker_exit:
+    mov x0, #1
+    mov x8, SYS_EXIT
+    svc #0
 
 /* connect_to_upstream() -> upstream_fd or -1 */
 connect_to_upstream:

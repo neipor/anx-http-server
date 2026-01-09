@@ -110,6 +110,10 @@
 .global client_ip_str
 .global time_buffer
 .global timespec
+.global last_log_sec
+.global epoll_events
+.global iovec_buffer
+.global act
 
 .data
     /* Defaults */
@@ -213,7 +217,7 @@
     key_upstream_port: .asciz "upstream_port="
 
     /* HTTP Headers Parts */
-    http_200_start: .ascii "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: "
+    http_200_start: .ascii "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Type: "
     len_200_start = . - http_200_start
     
     http_content_len: .ascii "\r\nContent-Length: "
@@ -300,6 +304,21 @@
     client_ip_str:  .skip 32        /* "XXX.XXX.XXX.XXX\0" */
     time_buffer:    .skip 32        /* "[HH:MM:SS] " */
     
+    /* Connection Contexts */
+    .align 4
+    epoll_events:   .skip 512
+    
+    /* IOVEC for writev (Max 8 elements * 16 bytes = 128) */
+    .align 4
+    iovec_buffer:   .skip 128
+    
+    /* Connection State */
+    keep_alive_flag: .skip 4
+
+    /* Time Cache */
+    .align 4
+    last_log_sec:   .skip 8         /* Last cached timestamp seconds */
+
     .align 4
     timespec:       .skip 16        /* struct timespec { sec, nsec } */
     act:            .skip 152   /* sizeof(struct sigaction) approx */

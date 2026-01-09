@@ -261,8 +261,44 @@ ntohs:
 .global ip_to_str
 .global get_time_str
 .global log_request
+.global set_nonblocking
 
 .text
+
+/* set_nonblocking(fd) -> 0 or -1 */
+set_nonblocking:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    mov x19, x0     /* fd */
+    
+    /* Get Flags */
+    mov x1, F_GETFL
+    mov x2, #0
+    mov x8, SYS_FCNTL
+    svc #0
+    cmp x0, #0
+    blt snb_fail
+    
+    mov x20, x0     /* flags */
+    
+    /* Add O_NONBLOCK */
+    mov x2, O_NONBLOCK
+    orr x2, x20, x2
+    
+    /* Set Flags */
+    mov x0, x19
+    mov x1, F_SETFL
+    /* x2 already set */
+    mov x8, SYS_FCNTL
+    svc #0
+    
+    mov x0, #0
+    ldp x29, x30, [sp], #16
+    ret
+snb_fail:
+    mov x0, #-1
+    ldp x29, x30, [sp], #16
+    ret
 
 /* ip_to_str(uint32 ip, char* buf) */
 ip_to_str:
@@ -333,6 +369,14 @@ get_time_str:
     ldr x1, =timespec
     ldr x0, [x1]    /* tv_sec */
     
+    /* Check Cache */
+    ldr x2, =last_log_sec
+    ldr x3, [x2]
+    cmp x0, x3
+    beq gt_done     /* Cache hit, buffer already valid */
+    
+    str x0, [x2]    /* Update cache key */
+    
     /* Calculate HH:MM:SS */
     /* Day seconds = 86400 */
     ldr x2, =86400
@@ -379,7 +423,8 @@ get_time_str:
     strb w2, [x20], #1
     mov w2, #0
     strb w2, [x20]
-    
+
+gt_done:
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret

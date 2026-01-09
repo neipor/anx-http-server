@@ -16,26 +16,36 @@ handle_client:
 
     mov x20, x0             /* x20 = client_fd */
     
+hc_loop:
     /* Read Request */
     mov x0, x20
     ldr x1, =req_buffer
     mov x2, #2048
     mov x8, SYS_READ
     svc #0
+    
+    /* Keep-Alive Check: 0 = EOF, <0 = Error */
     cmp x0, #0
-    ble hc_close
+    ble hc_close_final
     
     mov x22, x0             /* x22 = req len */
     
-    /* Detect Method */
+    /* Detect Method (SWAR) */
     ldr x1, =req_buffer
-    ldrb w2, [x1]
-    cmp w2, #'G'
+    ldr w2, [x1]            /* Load 4 bytes */
+    
+    ldr w3, =0x20544547     /* "GET " */
+    cmp w2, w3
     beq is_get
-    cmp w2, #'P'
+    
+    ldr w3, =0x54534f50     /* "POST" */
+    cmp w2, w3
     beq is_post
-    cmp w2, #'H'
+    
+    ldr w3, =0x44414548     /* "HEAD" */
+    cmp w2, w3
     beq is_head
+    
     b is_unknown
 
 is_get:
@@ -44,27 +54,24 @@ is_get:
     b method_done
 is_post:
     ldr x24, =str_post
-    add x1, x1, #5
+    add x1, x1, #5          /* "POST " */
     b method_done
 is_head:
     ldr x24, =str_head
-    add x1, x1, #5
+    add x1, x1, #5          /* "HEAD " */
     b method_done
 is_unknown:
     ldr x24, =str_unknown
     add x1, x1, #4          /* Assume 4 chars? Unsafe but keeping simple */
 
 method_done:
-    /* x1 now points to Path start */
-    
     /* Check Proxy Configuration */
     ldr x0, =upstream_ip
     ldr w0, [x0]
     cmp w0, #0
     bne do_proxy
     
-    /* Parse Request Path (x1 is already set) */
-    
+    /* Parse Request Path */
     mov x2, x1
 find_path_end:
     ldrb w3, [x2]
@@ -96,7 +103,7 @@ path_found:
     b open_file_direct
 
 is_dir_req:
-    /* Construct full path: root + path */
+    /* Construct full path */
     ldr x0, =file_path
     ldr x1, =server_root
     bl strcpy
@@ -122,8 +129,7 @@ is_dir_req:
     cmp x0, #0
     bge got_file_fd         /* Found index.html */
     
-    /* Failed to open index.html, revert path (remove /index.html) */
-    /* Or just re-construct path without index.html */
+    /* Failed to open index.html, revert path */
     ldr x0, =file_path
     ldr x1, =server_root
     bl strcpy
@@ -135,9 +141,7 @@ is_dir_req:
     
     /* Now try open as directory */
     mov x1, O_RDONLY
-    mov x2, #1
-    lsl x2, x2, #14       /* 0x4000 = O_DIRECTORY */
-    
+    mov x2, #0x4000       /* O_DIRECTORY */
     mov x8, SYS_OPENAT
     mov x0, AT_FDCWD
     ldr x1, =file_path
@@ -194,15 +198,15 @@ send_redirect:
     add x1, x1, #4
     mov x25, x1             /* Save path ptr */
     
-        /* Log 301 */
-        mov x0, x24
-        mov x1, x25
-        mov x2, #301
-        bl log_request
+    /* Log 301 */
+    mov x0, x24
+    mov x1, x25
+    mov x2, #301
+    bl log_request
     
-        mov x0, x25
-        bl strlen
-        mov x2, x0
+    mov x0, x25
+    bl strlen
+    mov x2, x0
     mov x0, x20
     mov x1, x25
     mov x8, SYS_WRITE
@@ -215,7 +219,7 @@ send_redirect:
     mov x8, SYS_WRITE
     svc #0
     
-    b hc_close
+    b hc_next_req
 
 handle_directory_listing:
     mov x21, x0             /* x21 = dir_fd */
@@ -252,7 +256,7 @@ handle_directory_listing:
     mov x8, SYS_WRITE
     svc #0
     
-    /* Send Dir Start (Table Header) */
+    /* Send Dir Start */
     mov x0, x20
     ldr x1, =dir_html_start
     ldr x2, =len_dir_start
@@ -279,11 +283,9 @@ parse_dirent:
     bge dir_loop            /* Buffer consumed, read more */
     
     ldrh w23, [x22, #16]    /* d_reclen */
+    add x25, x22, #19       /* name */
     
-    /* Name at x22 + 19 */
-    add x25, x22, #19       /* x25 = name ptr */
-    
-    /* Get File Size using NEWFSTATAT(dirfd, name, buf, flags) */
+    /* Size via NEWFSTATAT */
     mov x0, x21
     mov x1, x25
     ldr x2, =stat_buffer
@@ -300,14 +302,13 @@ size_fail:
     mov x26, #0             /* 0 on error */
 size_done:
 
-    /* Send Row Start */
+    /* HTML Table Row */
     mov x0, x20
     ldr x1, =tr_start
     ldr x2, =len_tr_start
     mov x8, SYS_WRITE
     svc #0
     
-    /* Send NAME */
     mov x0, x25
     bl strlen
     mov x2, x0
@@ -316,14 +317,12 @@ size_done:
     mov x8, SYS_WRITE
     svc #0
     
-    /* Send Link Mid */
     mov x0, x20
     ldr x1, =tr_mid
     ldr x2, =len_tr_mid
     mov x8, SYS_WRITE
     svc #0
     
-    /* Send NAME again */
     mov x0, x25
     bl strlen
     mov x2, x0
@@ -332,14 +331,12 @@ size_done:
     mov x8, SYS_WRITE
     svc #0
     
-    /* Send Link End & Cell Mid */
     mov x0, x20
     ldr x1, =tr_mid_2
     ldr x2, =len_tr_mid_2
     mov x8, SYS_WRITE
     svc #0
     
-    /* Send Size */
     mov x0, x26
     ldr x1, =num_buffer
     bl itoa
@@ -349,31 +346,27 @@ size_done:
     mov x8, SYS_WRITE
     svc #0
     
-    /* Send Row End */
     mov x0, x20
     ldr x1, =tr_end
     ldr x2, =len_tr_end
     mov x8, SYS_WRITE
     svc #0
     
-    /* Next entry */
     add x22, x22, x23       /* ptr += reclen */
     b parse_dirent
 
 dir_done:
-    /* Send Dir End */
     mov x0, x20
     ldr x1, =dir_html_end
     ldr x2, =len_dir_end
     mov x8, SYS_WRITE
     svc #0
     
-    /* Close dir_fd */
     mov x0, x21
     mov x8, SYS_CLOSE
     svc #0
     
-    b hc_close
+    b hc_next_req
 
 serve_file:
     /* Get File Size from cached stat_buffer (filled in got_file_fd) */
@@ -381,64 +374,58 @@ serve_file:
     ldr x1, =stat_buffer
     ldr x22, [x1, #48]      /* x22 = file size */
     
-    /* Determine MIME Type */
+    /* MIME Type (SWAR) */
     ldr x0, =file_path
     bl get_extension
     cmp x0, #0
-    beq set_mime_plain      /* No extension -> plain */
+    beq set_mime_plain
     
-    /* Compare Extensions */
-    mov x19, x0             /* Save ext ptr */
+    mov x19, x0
+    ldr x0, [x19]           /* Load 8 bytes */
     
-    mov x0, x19
-    ldr x1, =ext_html
-    bl strcmp
-    cmp x0, #0
+    /* .html\0 = 0x006c6d74682e */
+    ldr x1, =0x6c6d74682e
+    cmp x0, x1
     beq set_mime_html
     
-    mov x0, x19
-    ldr x1, =ext_css
-    bl strcmp
-    cmp x0, #0
+    /* .css\0 = 0x007373632e (5 bytes) */
+    mov x2, #0xFFFFFFFFFF
+    and x3, x0, x2
+    ldr x1, =0x7373632e
+    cmp x3, x1
     beq set_mime_css
     
-    mov x0, x19
-    ldr x1, =ext_js
-    bl strcmp
-    cmp x0, #0
+    /* .js\0 = 0x00736a2e (4 bytes) */
+    mov w3, w0
+    ldr w1, =0x736a2e
+    cmp w3, w1
     beq set_mime_js
-
-    mov x0, x19
-    ldr x1, =ext_png
-    bl strcmp
-    cmp x0, #0
+    
+    /* .png\0 = 0x00676e702e (5 bytes) */
+    and x3, x0, x2
+    ldr x1, =0x676e702e
+    cmp x3, x1
     beq set_mime_png
     
-    mov x0, x19
-    ldr x1, =ext_jpg
-    bl strcmp
-    cmp x0, #0
+    /* .jpg\0 = 0x0067706a2e (5 bytes) */
+    and x3, x0, x2
+    ldr x1, =0x67706a2e
+    cmp x3, x1
     beq set_mime_jpg
     
     b set_mime_plain
 
-set_mime_html:
-    ldr x23, =mime_html
+set_mime_html: ldr x23, =mime_html
     b send_response
-set_mime_css:
-    ldr x23, =mime_css
+set_mime_css: ldr x23, =mime_css
     b send_response
-set_mime_js:
-    ldr x23, =mime_js
+set_mime_js: ldr x23, =mime_js
     b send_response
-set_mime_png:
-    ldr x23, =mime_png
+set_mime_png: ldr x23, =mime_png
     b send_response
-set_mime_jpg:
-    ldr x23, =mime_jpg
+set_mime_jpg: ldr x23, =mime_jpg
     b send_response
-set_mime_plain:
-    ldr x23, =mime_plain
+set_mime_plain: ldr x23, =mime_plain
 
 send_response:
     /* Log 200 */
@@ -448,44 +435,47 @@ send_response:
     mov x2, #200
     bl log_request
 
-    /* Send 200 Start */
-    mov x0, x20
+    /* PREPARE WRITEV (4 iovecs) */
+    ldr x25, =iovec_buffer
+    
+    /* iov[0]: "HTTP/1.1 200 OK..." */
     ldr x1, =http_200_start
-    ldr x2, =len_200_start
-    mov x8, SYS_WRITE
-    svc #0
+    str x1, [x25]           /* iov_base */
+    ldr x1, =len_200_start
+    str x1, [x25, #8]       /* iov_len */
     
-    /* Send MIME String */
-    mov x0, x23             /* MIME string */
-    bl strlen               /* Calc MIME len */
-    mov x2, x0              /* Length */
-    mov x1, x23             /* RELOAD Buffer (MIME string) */
-    mov x0, x20             /* fd */
-    mov x8, SYS_WRITE
-    svc #0
+    /* iov[1]: MIME Type */
+    /* Need length of mime string */
+    mov x0, x23
+    bl strlen
+    str x23, [x25, #16]     /* iov_base */
+    str x0, [x25, #24]      /* iov_len */
     
-    /* Send Content-Length Header Part */
-    mov x0, x20
+    /* iov[2]: "Content-Length: " */
     ldr x1, =http_content_len
-    ldr x2, =len_content_len
-    mov x8, SYS_WRITE
-    svc #0
+    str x1, [x25, #32]
+    ldr x1, =len_content_len
+    str x1, [x25, #40]
     
-    /* Send Size Value */
+    /* iov[3]: Size Value */
     mov x0, x22
     ldr x1, =num_buffer
-    bl itoa
-    mov x2, x0
-    mov x0, x20
+    bl itoa                 /* x0 = len */
     ldr x1, =num_buffer
-    mov x8, SYS_WRITE
-    svc #0
+    str x1, [x25, #48]
+    str x0, [x25, #56]
     
-    /* Send Header End (CRLF CRLF) */
-    mov x0, x20
+    /* iov[4]: CRLF CRLF */
     ldr x1, =http_end
-    mov x2, #4
-    mov x8, SYS_WRITE
+    str x1, [x25, #64]
+    mov x0, #4
+    str x0, [x25, #72]
+    
+    /* Execute writev (5 iovecs) */
+    mov x0, x20             /* fd */
+    mov x1, x25             /* iovec ptr */
+    mov x2, #5              /* count */
+    mov x8, SYS_WRITEV
     svc #0
     
     /* Send File (sendfile) */
@@ -501,23 +491,23 @@ send_response:
     mov x8, SYS_CLOSE
     svc #0
     
-    b hc_close
+    b hc_next_req
 
 do_proxy:
     bl connect_to_upstream
     cmp x0, #0
     blt send_502
-        mov x21, x0     /* x21 = upstream_fd */
-        
-        /* Log 200 (Proxy) */
-        mov x0, x24
-        ldr x1, =req_buffer
-        add x1, x1, #4
-        mov x2, #200
-        bl log_request
+    mov x21, x0     /* x21 = upstream_fd */
     
-        /* Forward Request (Original, x22 = len) */
-        mov x0, x21
+    /* Log 200 (Proxy) */
+    mov x0, x24
+    ldr x1, =req_buffer
+    add x1, x1, #4
+    mov x2, #200
+    bl log_request
+    
+    /* Forward Request */
+    mov x0, x21
     ldr x1, =req_buffer
     mov x2, x22
     mov x8, SYS_WRITE
@@ -545,7 +535,7 @@ proxy_done:
     mov x0, x21
     mov x8, SYS_CLOSE
     svc #0
-    b hc_close
+    b hc_close_final
 
 send_502:
     /* Log 502 */
@@ -560,7 +550,7 @@ send_502:
     ldr x2, =len_502
     mov x8, SYS_WRITE
     svc #0
-    b hc_close
+    b hc_next_req
 
 send_404:
     /* Log 404 */
@@ -575,8 +565,13 @@ send_404:
     ldr x2, =len_404
     mov x8, SYS_WRITE
     svc #0
+    b hc_next_req
 
-hc_close:
+hc_next_req:
+    /* Loop back for Keep-Alive */
+    b hc_loop
+
+hc_close_final:
     mov x0, x20
     mov x8, SYS_CLOSE
     svc #0

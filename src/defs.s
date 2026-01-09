@@ -1,6 +1,10 @@
 /* src/defs.s - System Call Constants & Definitions */
 
 /* Syscalls */
+.equ SYS_EPOLL_CREATE1, 20
+.equ SYS_EPOLL_CTL, 21
+.equ SYS_EPOLL_WAIT, 22
+.equ SYS_FCNTL, 25
 .equ SYS_OPENAT, 56
 .equ SYS_CLOSE, 57
 .equ SYS_GETDENTS64, 61
@@ -19,9 +23,29 @@
 .equ SYS_LISTEN, 201
 .equ SYS_ACCEPT, 202
 .equ SYS_CONNECT, 203
+.equ SYS_ACCEPT4, 242
 .equ SYS_SETSOCKOPT, 208
 .equ SYS_CLONE, 220
 .equ SYS_WAIT4, 260
+
+/* Fcntl */
+.equ F_GETFL, 3
+.equ F_SETFL, 4
+.equ O_NONBLOCK, 2048
+
+/* Epoll */
+.equ EPOLL_CTL_ADD, 1
+.equ EPOLL_CTL_DEL, 2
+.equ EPOLL_CTL_MOD, 3
+.equ EPOLLIN, 1
+.equ EPOLLOUT, 4
+.equ EPOLLET, 0x80000000
+.equ EPOLLEXCLUSIVE, 0x10000000
+.equ MAX_EVENTS, 32
+
+/* Socket Options */
+.equ TCP_DEFER_ACCEPT, 9
+.equ IPPROTO_TCP, 6
 
 /* Constants */
 .equ STDIN, 0
