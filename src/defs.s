@@ -5,6 +5,7 @@
 .equ SYS_EPOLL_CTL, 21
 .equ SYS_EPOLL_WAIT, 22
 .equ SYS_FCNTL, 25
+.equ SYS_UNLINKAT, 35
 .equ SYS_OPENAT, 56
 .equ SYS_CLOSE, 57
 .equ SYS_GETDENTS64, 61
@@ -17,6 +18,7 @@
 .equ SYS_NEWFSTATAT, 79
 .equ SYS_FSTAT, 80
 .equ SYS_EXIT, 93
+.equ SYS_GETPID, 172
 .equ SYS_RT_SIGACTION, 134
 .equ SYS_SOCKET, 198
 .equ SYS_BIND, 200
@@ -63,6 +65,7 @@
 .equ O_RDONLY, 0
 .equ O_WRONLY, 1
 .equ O_CREAT, 0x40
+.equ O_TRUNC, 0x200
 .equ O_APPEND, 0x400
 .equ O_DIRECTORY, 0x4000  /* 040000 octal */
 .equ AT_FDCWD, -100

@@ -158,6 +158,9 @@
     key_access_log: .asciz "access_log="
     key_upstream_ip: .asciz "upstream_ip="
     key_upstream_port: .asciz "upstream_port="
+    
+    pid_file_path: .asciz "server.pid"
+    .global pid_file_path
 
     /* HTTP Headers & Error Pages */
     http_server_hdr: .ascii "Server: ANX/4.1\r\n"

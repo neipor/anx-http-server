@@ -298,11 +298,91 @@ start_server_label:
     mov x8, SYS_WRITE
     svc #0
 
+    /* Write PID File */
+    /* Open/Create server.pid */
+    mov x0, AT_FDCWD
+    ldr x1, =pid_file_path
+    ldr x2, =O_WRONLY
+    ldr x3, =O_CREAT
+    orr x2, x2, x3
+    mov x3, #0x200          /* O_TRUNC = 0x200? Need to check */
+    orr x2, x2, x3
+    mov x3, #420            /* 0644 */
+    mov x8, SYS_OPENAT
+    svc #0
+    
+    cmp x0, #0
+    blt pid_fail
+    mov x19, x0             /* pid_fd */
+    
+    /* Get PID */
+    mov x8, SYS_GETPID
+    svc #0
+    
+    /* Convert to String */
+    ldr x1, =num_buffer
+    bl itoa
+    mov x2, x0              /* len */
+    
+    /* Write to file */
+    mov x0, x19
+    ldr x1, =num_buffer
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Close */
+    mov x0, x19
+    mov x8, SYS_CLOSE
+    svc #0
+    
+pid_fail:
+
     /* Initialize Server */
+    bl setup_signals
     bl server_init
     
     /* Enter Accept Loop */
     bl accept_loop
+    
+    /* Exit */
+    mov x0, #0
+    mov x8, SYS_EXIT
+    svc #0
+
+setup_signals:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    
+    ldr x0, =shutdown_handler
+    str x0, [sp, #16]       /* handler */
+    str xzr, [sp, #24]      /* flags/mask */
+    
+    /* SIGINT */
+    mov x0, #2
+    add x1, sp, #16
+    mov x2, #0
+    mov x3, #8
+    mov x8, SYS_RT_SIGACTION
+    svc #0
+    
+    /* SIGTERM */
+    mov x0, #15
+    add x1, sp, #16
+    mov x2, #0
+    mov x3, #8
+    mov x8, SYS_RT_SIGACTION
+    svc #0
+    
+    ldp x29, x30, [sp], #32
+    ret
+
+shutdown_handler:
+    /* Unlink PID file */
+    mov x0, AT_FDCWD
+    ldr x1, =pid_file_path
+    mov x2, #0
+    mov x8, SYS_UNLINKAT
+    svc #0
     
     /* Exit */
     mov x0, #0
