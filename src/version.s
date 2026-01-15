@@ -1,4 +1,4 @@
 .global msg_version_current, len_version_current
 .data
-msg_version_current: .ascii "761e933-dirty"
+msg_version_current: .ascii "3c551d7-dirty"
 len_version_current = . - msg_version_current

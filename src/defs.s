@@ -57,6 +57,8 @@
 .equ SOCK_STREAM, 1
 .equ SOL_SOCKET, 1
 .equ SO_REUSEADDR, 2
+.equ SO_RCVTIMEO, 20
+.equ SO_SNDTIMEO, 21
 .equ O_RDONLY, 0
 .equ O_DIRECTORY, 0x4000  /* 040000 octal */
 .equ AT_FDCWD, -100

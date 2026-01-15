@@ -20,6 +20,7 @@ handle_client:
     stp x27, x28, [sp, #80]
 
     mov x20, x0             /* x20 = client_fd */
+    mov x28, #1             /* x28 = keep_alive (1=true) */
 
 hc_loop:
     /* 1. Read Request */
@@ -31,13 +32,23 @@ hc_loop:
 
     cmp x0, #0
     ble hc_close_final
+    strb wzr, [x1, x0]      /* Null terminate request */
 
     /* 2. Parse Request */
     ldr x0, =req_buffer
     bl parse_request
     cmp x0, #0
     bne send_400
+    
+    /* 2.5 Check Connection: close */
+    ldr x0, =req_buffer
+    ldr x1, =str_conn_close
+    bl strstr
+    cmp x0, #0
+    beq check_trav
+    mov x28, #0             /* Found Connection: close -> disable KA */
 
+check_trav:
     /* 3. Security: Check Directory Traversal */
     ldr x0, =req_path
     bl check_traversal
@@ -90,7 +101,55 @@ hc_loop:
 handle_file_load_size:
     ldr x1, =stat_buffer
     ldr x22, [x1, #48]      /* st_size */
-    b serve_file
+    ldr x23, [x1, #88]      /* st_mtime */
+    
+    /* Generate ETag: Size(Hex)-Mtime(Hex) */
+    ldr x26, =etag_buffer
+    
+    /* Size */
+    mov x0, x22
+    mov x1, x26
+    bl itoa_hex
+    add x26, x26, x0
+    
+    /* Dash */
+    mov w2, #'-'
+    strb w2, [x26], #1
+    
+    /* Mtime */
+    mov x0, x23
+    mov x1, x26
+    bl itoa_hex
+    add x26, x26, x0
+    
+    /* Null terminate */
+    strb wzr, [x26]
+    
+    /* Calculate ETag Len */
+    ldr x0, =etag_buffer
+    sub x27, x26, x0         /* x27 = etag len */
+    
+    /* Check If-None-Match */
+    ldr x0, =req_buffer
+    ldr x1, =etag_buffer
+    bl strstr
+    cmp x0, #0
+    beq serve_file          /* Not found */
+    
+    /* Found ETag string. Verify quotes around it? */
+    /* x0 is match ptr. Check [x0-1] == '"' */
+    ldrb w2, [x0, #-1]
+    cmp w2, #'"'
+    bne serve_file
+    
+    /* Check end quote [x0+x27] == '"' */
+    add x0, x0, x27
+    ldrb w2, [x0]
+    cmp w2, #'"'
+    bne serve_file
+    
+    /* Match! Send 304 */
+    b send_304
 
 handle_file:
     b serve_file
@@ -202,10 +261,57 @@ set_mime_bin:
     b send_response
 
 send_response:
-    /* 1. Write HTTP header start */
+    /* 1. Write HTTP header start (Status) */
     mov x0, x20
-    ldr x1, =http_200_start
-    mov x2, #55
+    ldr x1, =http_status_200
+    ldr x2, =len_status_200
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 1.2 Write Connection Header */
+    cmp x28, #1
+    beq send_ka
+    ldr x1, =http_conn_close_hdr
+    ldr x2, =len_conn_close_hdr
+    b do_send_conn
+send_ka:
+    ldr x1, =http_conn_ka
+    ldr x2, =len_conn_ka
+do_send_conn:
+    mov x0, x20
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 1.5 Write Server Header */
+    mov x0, x20
+    ldr x1, =http_server_hdr
+    ldr x2, =len_server_hdr
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* 1.55 Write ETag */
+    mov x0, x20
+    ldr x1, =http_etag_start
+    ldr x2, =len_etag_start
+    mov x8, SYS_WRITE
+    svc #0
+    
+    mov x0, x20
+    ldr x1, =etag_buffer
+    mov x2, x27
+    mov x8, SYS_WRITE
+    svc #0
+    
+    mov x0, x20
+    ldr x1, =http_quote_newline
+    ldr x2, =len_quote_newline
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* 1.6 Write Content-Type Label */
+    mov x0, x20
+    ldr x1, =http_content_type
+    ldr x2, =len_content_type
     mov x8, SYS_WRITE
     svc #0
     
@@ -239,20 +345,65 @@ send_response:
     mov x8, SYS_WRITE
     svc #0
     
-    /* 6. Send file content using sendfile */
+    /* 6. Send file content using sendfile (Loop) */
     ldr x0, =sendfile_offset
     str xzr, [x0]            /* offset = 0 */
+
+sendfile_loop:
+    cmp x22, #0
+    ble sendfile_done
+
     mov x0, x20              /* out fd */
     mov x1, x21              /* in fd */
-    ldr x2, =sendfile_offset /* offset ptr */
-    mov x3, x22              /* count */
+    ldr x2, =sendfile_offset /* offset ptr (updated by kernel) */
+    mov x3, x22              /* count = remaining */
     mov x8, SYS_SENDFILE
     svc #0
     
+    cmp x0, #0
+    ble sendfile_done        /* Error (-1) or EOF (0) */
+    
+    sub x22, x22, x0         /* remaining -= sent */
+    b sendfile_loop
+
+sendfile_done:
     /* Close file */
     mov x0, x21
     mov x8, SYS_CLOSE
     svc #0
+    
+    cmp x28, #1
+    beq hc_loop
+    b hc_close_final
+
+send_304:
+    mov x0, x20
+    ldr x1, =http_304
+    ldr x2, =len_304
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 304 ETag */
+    mov x0, x20
+    ldr x1, =http_etag_start
+    ldr x2, =len_etag_start
+    mov x8, SYS_WRITE
+    svc #0
+    
+    mov x0, x20
+    ldr x1, =etag_buffer
+    mov x2, x27
+    mov x8, SYS_WRITE
+    svc #0
+    
+    mov x0, x20
+    ldr x1, =http_quote_newline
+    ldr x2, =len_quote_newline
+    mov x8, SYS_WRITE
+    svc #0
+    
+    cmp x28, #1
+    beq hc_loop
     b hc_close_final
 
 /* ------------------------------------------------------------------------- */

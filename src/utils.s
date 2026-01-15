@@ -130,7 +130,10 @@ scmp_eq:
 
 /* strstr(haystack, needle) -> ptr or NULL */
 strstr:
-    stp x19, x20, [sp, #-16]!
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    
     mov x19, x0     /* haystack */
     mov x20, x1     /* needle */
     
@@ -173,7 +176,8 @@ strstr_found_immediate:
 strstr_not_found:
     mov x0, #0
 strstr_exit:
-    ldp x19, x20, [sp], #16
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
     ret
 
 /* has_dotdot(str) -> 1 if has "..", 0 if not */
@@ -277,6 +281,55 @@ rv_loop_l:
     sub x9, x9, #1
     b rv_loop_l
 rv_dn_l: ret
+
+/* itoa_hex(uint64 val, char* buf) -> len */
+.global itoa_hex
+itoa_hex:
+    mov x2, x1      /* buf */
+    mov x3, x0      /* val */
+    mov x4, #0      /* len */
+    
+    cmp x3, #0
+    bne ih_loop
+    mov w5, #'0'
+    strb w5, [x2]
+    mov x0, #1
+    ret
+
+ih_loop:
+    cmp x3, #0
+    beq ih_rev
+    
+    and x5, x3, #0xF
+    cmp x5, #10
+    blt ih_digit
+    add x5, x5, #39 /* 'A' - 10 - '0' = 65 - 10 - 48 = 7. Wait. 'a' is 97. */
+    /* 'A'(65) for 10. 10+55=65. */
+    add x5, x5, #7
+ih_digit:
+    add x5, x5, #'0'
+    strb w5, [x2, x4]
+    add x4, x4, #1
+    lsr x3, x3, #4
+    b ih_loop
+
+ih_rev:
+    /* Reuse reverse logic from itoa if possible, but registers differ. Inline it. */
+    mov x0, x4
+    mov x8, #0
+    sub x9, x4, #1
+ih_rv_loop:
+    cmp x8, x9
+    bge ih_done
+    ldrb w10, [x2, x8]
+    ldrb w11, [x2, x9]
+    strb w11, [x2, x8]
+    strb w10, [x2, x9]
+    add x8, x8, #1
+    sub x9, x9, #1
+    b ih_rv_loop
+ih_done:
+    ret
 
 /* htons(short) -> short (swap bytes) */
 htons:

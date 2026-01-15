@@ -24,6 +24,11 @@
 .global msg_conf_read, len_conf_read
 .global msg_config_fail, len_config_fail
 .global msg_bind_fail, len_bind_fail
+.global timeout_tv
+.global http_server_hdr, len_server_hdr
+.global http_content_type, len_content_type
+.global str_conn_close
+
 
 /* Keys & Flags */
 .global key_port, key_root, key_upstream_ip, key_upstream_port
@@ -96,6 +101,11 @@
     upstream_addr:  .hword 2, 0, 0, 0, 0, 0, 0
     optval:         .word 1
 
+    .align 4
+    timeout_tv:
+        .quad 30        /* tv_sec = 30 */
+        .quad 0         /* tv_usec = 0 */
+
     /* Flags */
     flag_p:         .asciz "-p"
     flag_d:         .asciz "-d"
@@ -149,12 +159,41 @@
     key_upstream_port: .asciz "upstream_port="
 
     /* HTTP Headers & Error Pages */
-    http_200_start: .ascii "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Type: "
-    len_200_start = . - http_200_start
-    .global len_200_start_val
-    len_200_start_val: .word 55  /* HTTP/1.1 200 OK + Connection: keep-alive + Content-Type:  */
+    http_server_hdr: .ascii "Server: ANX/4.1\r\n"
+    len_server_hdr = . - http_server_hdr
     
-    http_200_close: .ascii "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/html\r\n\r\n"
+    http_status_200: .ascii "HTTP/1.1 200 OK\r\n"
+    len_status_200 = . - http_status_200
+    
+    http_conn_ka: .ascii "Connection: keep-alive\r\n"
+    len_conn_ka = . - http_conn_ka
+    
+    http_conn_close_hdr: .ascii "Connection: close\r\n"
+    len_conn_close_hdr = . - http_conn_close_hdr
+    
+    http_etag_start: .ascii "ETag: \""
+    len_etag_start = . - http_etag_start
+    
+    http_quote_newline: .ascii "\"\r\n"
+    len_quote_newline = . - http_quote_newline
+    
+    http_content_type: .ascii "Content-Type: "
+    len_content_type = . - http_content_type
+    
+    .global http_status_200, len_status_200
+    .global http_conn_ka, len_conn_ka
+    .global http_conn_close_hdr, len_conn_close_hdr
+    .global http_etag_start, len_etag_start
+    .global http_quote_newline, len_quote_newline
+    .global etag_buffer
+    
+    /* 304 Not Modified */
+    http_304:
+        .ascii "HTTP/1.1 304 Not Modified\r\nConnection: keep-alive\r\nServer: ANX/4.1\r\nContent-Length: 0\r\n\r\n"
+    len_304 = . - http_304
+    .global http_304, len_304
+    
+    http_200_close: .ascii "HTTP/1.1 200 OK\r\nConnection: close\r\nServer: ANX/4.1\r\nContent-Type: text/html\r\n\r\n"
     len_200_close = . - http_200_close
     .global len_200_close_val
     len_200_close_val: .word 63
@@ -201,6 +240,8 @@
     str_post:       .asciz "POST"
     str_head:       .asciz "HEAD"
     str_unknown:    .asciz "REQ"
+    str_conn_close: .asciz "Connection: close"
+
 
     /* Extended MIME Types */
     mime_html:      .asciz "text/html"
@@ -344,4 +385,5 @@
     timespec:       .skip 16
     act:            .skip 152
     content_len_str: .skip 32
+    etag_buffer:    .skip 64
     sendfile_offset: .skip 8

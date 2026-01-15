@@ -198,10 +198,10 @@ do_accept:
     add x1, sp, #16         /* sockaddr */
     mov x2, sp              /* addrlen ptr */
     
-    /* Enable Non-Blocking & CloExec on new socket */
-    ldr x3, =SOCK_NONBLOCK
-    ldr x4, =SOCK_CLOEXEC
-    orr x3, x3, x4
+    /* Enable CloExec on new socket (Blocking I/O + Timeouts) */
+    ldr x3, =SOCK_CLOEXEC
+    /* ldr x4, =SOCK_NONBLOCK */
+    /* orr x3, x3, x4 */     /* Removed Non-Blocking */
     
     mov x8, SYS_ACCEPT4
     svc #0
@@ -210,6 +210,24 @@ do_accept:
     blt accept_fail
 
     mov x25, x0             /* client_fd */
+
+    /* Set SO_RCVTIMEO (30s) */
+    mov x0, x25
+    mov x1, SOL_SOCKET
+    mov x2, SO_RCVTIMEO
+    ldr x3, =timeout_tv
+    mov x4, #16             /* sizeof(struct timeval) */
+    mov x8, SYS_SETSOCKOPT
+    svc #0
+    
+    /* Set SO_SNDTIMEO (30s) */
+    mov x0, x25
+    mov x1, SOL_SOCKET
+    mov x2, SO_SNDTIMEO
+    ldr x3, =timeout_tv
+    mov x4, #16
+    mov x8, SYS_SETSOCKOPT
+    svc #0
 
     /* Capture IP */
     /*
