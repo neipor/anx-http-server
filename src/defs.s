@@ -46,6 +46,8 @@
 /* Socket Options */
 .equ TCP_DEFER_ACCEPT, 9
 .equ IPPROTO_TCP, 6
+.equ SOCK_NONBLOCK, 2048
+.equ SOCK_CLOEXEC, 524288
 
 /* Constants */
 .equ STDIN, 0
@@ -65,9 +67,16 @@
 .equ DT_REG, 8
 .equ DT_DIR, 4
 
+/* Stat Mode */
+.equ S_IFMT, 0xF000
+.equ S_IFDIR, 0x4000
+.equ S_IFREG, 0x8000
+
 /* Signals */
 .equ SIGCHLD, 17
+.equ SIGPIPE, 13
 .equ SIG_IGN, 1
+.equ EINTR, 4
 
 /* Clone Flags */
 .equ SIGCHLD_FLAG, 17     /* Exit signal for clone */

@@ -1,4 +1,4 @@
-/* src/http.s - HTTP Request Handling */
+/* src/http.s - Full Implementation */
 
 .include "src/defs.s"
 
@@ -6,483 +6,246 @@
 
 .text
 
+/* ------------------------------------------------------------------------- */
 /* handle_client(client_fd) */
+/* ------------------------------------------------------------------------- */
 handle_client:
-    stp x29, x30, [sp, #-64]!
+    /* Stack Frame: 96 bytes */
+    stp x29, x30, [sp, #-96]!
     mov x29, sp
     stp x19, x20, [sp, #16]
     stp x21, x22, [sp, #32]
     stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
 
     mov x20, x0             /* x20 = client_fd */
-    
+
 hc_loop:
-    /* Read Request */
+    /* 1. Read Request */
     mov x0, x20
     ldr x1, =req_buffer
-    mov x2, #2048
+    mov x2, #8192
     mov x8, SYS_READ
     svc #0
-    
-    /* Keep-Alive Check: 0 = EOF, <0 = Error */
+
     cmp x0, #0
     ble hc_close_final
-    
-    mov x22, x0             /* x22 = req len */
-    
-    /* Detect Method (SWAR) */
-    ldr x1, =req_buffer
-    ldr w2, [x1]            /* Load 4 bytes */
-    
-    ldr w3, =0x20544547     /* "GET " */
-    cmp w2, w3
-    beq is_get
-    
-    ldr w3, =0x54534f50     /* "POST" */
-    cmp w2, w3
-    beq is_post
-    
-    ldr w3, =0x44414548     /* "HEAD" */
-    cmp w2, w3
-    beq is_head
-    
-    b is_unknown
 
-is_get:
-    ldr x24, =str_get       /* x24 = method string */
-    add x1, x1, #4          /* Skip "GET " */
-    b method_done
-is_post:
-    ldr x24, =str_post
-    add x1, x1, #5          /* "POST " */
-    b method_done
-is_head:
-    ldr x24, =str_head
-    add x1, x1, #5          /* "HEAD " */
-    b method_done
-is_unknown:
-    ldr x24, =str_unknown
-    add x1, x1, #4          /* Assume 4 chars? Unsafe but keeping simple */
+    /* 2. Parse Request */
+    ldr x0, =req_buffer
+    bl parse_request
+    cmp x0, #0
+    bne send_400
 
-method_done:
-    /* Check Proxy Configuration */
-    ldr x0, =upstream_ip
-    ldr w0, [x0]
-    cmp w0, #0
-    bne do_proxy
-    
-    /* Parse Request Path */
-    mov x2, x1
-find_path_end:
-    ldrb w3, [x2]
-    cmp w3, #' '
-    beq path_found
-    add x2, x2, #1
-    b find_path_end
+    /* 3. Security: Check Directory Traversal */
+    ldr x0, =req_path
+    bl check_traversal
+    cmp x0, #0
+    bne send_403
 
-path_found:
-    mov w3, #0
-    strb w3, [x2]           /* Null terminate path */
+    /* 4. Resolve Path */
+    /* Construct full path: server_root + req_path */
+    ldr x27, =path_buffer
     
-    /* Check if path ends with '/' */
-    sub x2, x2, #1
-    ldrb w3, [x2]
-    cmp w3, #'/'
-    beq is_dir_req
-    
-    /* Construct full path: root + path */
-    ldr x0, =file_path
-    ldr x1, =server_root
+    ldr x0, =path_buffer    /* dst */
+    ldr x1, =server_root    /* src */
     bl strcpy
     
-    ldr x0, =file_path
-    ldr x1, =req_buffer
-    add x1, x1, #4
+    ldr x0, =path_buffer    /* dst */
+    ldr x1, =req_path       /* src */
     bl strcat
-    
-    b open_file_direct
 
-is_dir_req:
-    /* Construct full path */
-    ldr x0, =file_path
-    ldr x1, =server_root
-    bl strcpy
+    /* 5. Stat File */
+    mov x0, AT_FDCWD
+    mov x1, x27             /* path_buffer */
+    ldr x2, =stat_buffer
+    mov x3, #0              /* flags */
+    mov x8, SYS_NEWFSTATAT
+    svc #0
+
+    cmp x0, #0
+    blt send_404
+
+    /* 6. Check File Type */
+    ldr x1, =stat_buffer
+    ldr w2, [x1, #16]       /* st_mode */
     
-    ldr x0, =file_path
-    ldr x1, =req_buffer
-    add x1, x1, #4
-    bl strcat
+    ldr w3, =S_IFMT
+    and w3, w2, w3
     
-    /* Try adding index.html */
-    ldr x0, =file_path
+    ldr w4, =S_IFDIR
+    cmp w3, w4
+    beq handle_dir
+    
+    ldr w4, =S_IFREG
+    cmp w3, w4
+    beq handle_file_load_size
+    
+    b send_403
+
+/* ------------------------------------------------------------------------- */
+/* File Handling */
+/* ------------------------------------------------------------------------- */
+handle_file_load_size:
+    ldr x1, =stat_buffer
+    ldr x22, [x1, #48]      /* st_size */
+    b serve_file
+
+handle_file:
+    b serve_file
+
+/* ------------------------------------------------------------------------- */
+/* Directory Handling */
+/* ------------------------------------------------------------------------- */
+handle_dir:
+    /* Check if index.html exists */
+    ldr x0, =path_buffer
     ldr x1, =index_file
     bl strcat
     
-    /* Try open index.html */
-    mov x1, O_RDONLY
-    mov x2, #0
-    mov x8, SYS_OPENAT
     mov x0, AT_FDCWD
-    ldr x1, =file_path
-    svc #0
-    
-    cmp x0, #0
-    bge got_file_fd         /* Found index.html */
-    
-    /* Failed to open index.html, revert path */
-    ldr x0, =file_path
-    ldr x1, =server_root
-    bl strcpy
-    
-    ldr x0, =file_path
-    ldr x1, =req_buffer
-    add x1, x1, #4
-    bl strcat
-    
-    /* Now try open as directory */
-    mov x1, O_RDONLY
-    mov x2, #0x4000       /* O_DIRECTORY */
-    mov x8, SYS_OPENAT
-    mov x0, AT_FDCWD
-    ldr x1, =file_path
-    svc #0
-    
-    cmp x0, #0
-    bge handle_directory_listing
-    
-    b send_404
-
-open_file_direct:
-    mov x1, O_RDONLY
-    mov x2, #0
-    mov x8, SYS_OPENAT
-    mov x0, AT_FDCWD
-    ldr x1, =file_path
-    svc #0
-    
-    cmp x0, #0
-    blt send_404
-    
-got_file_fd:
-    mov x21, x0             /* x21 = file_fd */
-
-    /* Check if it is a directory using FSTAT */
-    mov x0, x21
-    ldr x1, =stat_buffer
-    mov x8, SYS_FSTAT
-    svc #0
-    
-    ldr x1, =stat_buffer
-    ldr w2, [x1, #16]       /* st_mode */
-    and w2, w2, #0xF000     /* S_IFMT */
-    cmp w2, #0x4000         /* S_IFDIR */
-    beq send_redirect
-    
-    b serve_file
-
-send_redirect:
-    /* Close file fd */
-    mov x0, x21
-    mov x8, SYS_CLOSE
-    svc #0
-    
-    /* Send 301 Header */
-    mov x0, x20
-    ldr x1, =http_301_start
-    ldr x2, =len_301_start
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* Send Current Path */
-    ldr x1, =req_buffer
-    add x1, x1, #4
-    mov x25, x1             /* Save path ptr */
-    
-    /* Log 301 */
-    mov x0, x24
-    mov x1, x25
-    mov x2, #301
-    bl log_request
-    
-    mov x0, x25
-    bl strlen
-    mov x2, x0
-    mov x0, x20
-    mov x1, x25
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* Send / and End */
-    mov x0, x20
-    ldr x1, =slash_newline
-    ldr x2, =len_slash_nl
-    mov x8, SYS_WRITE
-    svc #0
-    
-    b hc_next_req
-
-handle_directory_listing:
-    mov x21, x0             /* x21 = dir_fd */
-    
-    /* Log 200 */
-    mov x0, x24
-    ldr x1, =req_buffer
-    add x1, x1, #4
-    mov x2, #200
-    bl log_request
-    
-    /* Send 200 Header (HTML) */
-    mov x0, x20
-    ldr x1, =http_200_start
-    ldr x2, =len_200_start
-    mov x8, SYS_WRITE
-    svc #0
-    
-    ldr x23, =mime_html
-    mov x0, x20
-    mov x1, x23
-    mov x0, x23
-    bl strlen
-    mov x2, x0
-    mov x1, x23             /* Reload */
-    mov x0, x20
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* Send double CRLF */
-    mov x0, x20
-    ldr x1, =http_end
-    mov x2, #4
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* Send Dir Start */
-    mov x0, x20
-    ldr x1, =dir_html_start
-    ldr x2, =len_dir_start
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* Read Directory Entries */
-dir_loop:
-    mov x0, x21             /* dir_fd */
-    ldr x1, =req_buffer     /* reuse req_buffer for dirents */
-    mov x2, #2048
-    mov x8, SYS_GETDENTS64
-    svc #0
-    
-    cmp x0, #0
-    ble dir_done            /* 0 = EOF, <0 = Error */
-    
-    mov x19, x0             /* x19 = bytes read */
-    ldr x22, =req_buffer    /* x22 = current ptr */
-    add x19, x22, x19       /* x19 = end ptr */
-    
-parse_dirent:
-    cmp x22, x19
-    bge dir_loop            /* Buffer consumed, read more */
-    
-    ldrh w23, [x22, #16]    /* d_reclen */
-    add x25, x22, #19       /* name */
-    
-    /* Size via NEWFSTATAT */
-    mov x0, x21
-    mov x1, x25
+    ldr x1, =path_buffer
     ldr x2, =stat_buffer
     mov x3, #0
     mov x8, SYS_NEWFSTATAT
     svc #0
     
     cmp x0, #0
-    bne size_fail
-    ldr x1, =stat_buffer
-    ldr x26, [x1, #48]      /* st_size */
-    b size_done
-size_fail:
-    mov x26, #0             /* 0 on error */
-size_done:
+    beq handle_file_load_size         /* index.html exists -> serve it */
+    
+    /* Else -> Listing */
+    ldr x0, =path_buffer    /* dst */
+    ldr x1, =server_root    /* src */
+    bl strcpy
+    ldr x0, =path_buffer
+    ldr x1, =req_path
+    bl strcat
+    
+    mov x0, x20             /* client_fd */
+    ldr x1, =path_buffer
+    ldr x2, =req_path       /* relative path for links */
+    bl serve_directory
+    b hc_close_final
 
-    /* HTML Table Row */
+/* ------------------------------------------------------------------------- */
+/* Serve File Logic */
+/* ------------------------------------------------------------------------- */
+serve_file:
+    /* Open File */
+    mov x0, AT_FDCWD
+    ldr x1, =path_buffer
+    mov x2, O_RDONLY
+    mov x3, #0
+    mov x8, SYS_OPENAT
+    svc #0
+    
+    cmp x0, #0
+    blt send_403
+    mov x21, x0             /* x21 = file_fd */
+
+    /* MIME Detection */
+    ldr x0, =path_buffer
+    bl get_extension
+    mov x19, x0             /* x19 = ext ptr */
+    
+    cmp x19, #0
+    beq set_mime_bin
+
+    /* Compare Extensions */
+    mov x0, x19
+    ldr x1, =ext_html
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_html
+    
+    mov x0, x19
+    ldr x1, =ext_css
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_css
+    
+    mov x0, x19
+    ldr x1, =ext_js
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_js
+    
+    mov x0, x19
+    ldr x1, =ext_txt
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_txt
+    
+    /* Default */
+    b set_mime_bin
+
+set_mime_html:
+    ldr x25, =mime_html
+    mov x26, #9
+    b send_response
+set_mime_css:
+    ldr x25, =mime_css
+    mov x26, #8
+    b send_response
+set_mime_js:
+    ldr x25, =mime_js
+    mov x26, #22
+    b send_response
+set_mime_txt:
+    ldr x25, =mime_txt
+    mov x26, #10
+    b send_response
+set_mime_bin:
+    ldr x25, =mime_bin
+    mov x26, #24
+    b send_response
+
+send_response:
+    /* 1. Write HTTP header start */
     mov x0, x20
-    ldr x1, =tr_start
-    ldr x2, =len_tr_start
+    ldr x1, =http_200_start
+    mov x2, #55
     mov x8, SYS_WRITE
     svc #0
     
-    mov x0, x25
-    bl strlen
-    mov x2, x0
+    /* 2. Write MIME type */
     mov x0, x20
     mov x1, x25
+    mov x2, x26
     mov x8, SYS_WRITE
     svc #0
     
+    /* 3. Write Content-Length header */
     mov x0, x20
-    ldr x1, =tr_mid
-    ldr x2, =len_tr_mid
+    ldr x1, =http_content_len
+    mov x2, #18
     mov x8, SYS_WRITE
     svc #0
     
-    mov x0, x25
-    bl strlen
-    mov x2, x0
-    mov x0, x20
-    mov x1, x25
-    mov x8, SYS_WRITE
-    svc #0
-    
-    mov x0, x20
-    ldr x1, =tr_mid_2
-    ldr x2, =len_tr_mid_2
-    mov x8, SYS_WRITE
-    svc #0
-    
-    mov x0, x26
-    ldr x1, =num_buffer
+    /* 4. Write content length value */
+    mov x0, x22
+    ldr x1, =content_len_str
     bl itoa
     mov x2, x0
     mov x0, x20
-    ldr x1, =num_buffer
     mov x8, SYS_WRITE
     svc #0
     
+    /* 5. Write header end */
     mov x0, x20
-    ldr x1, =tr_end
-    ldr x2, =len_tr_end
-    mov x8, SYS_WRITE
-    svc #0
-    
-    add x22, x22, x23       /* ptr += reclen */
-    b parse_dirent
-
-dir_done:
-    mov x0, x20
-    ldr x1, =dir_html_end
-    ldr x2, =len_dir_end
-    mov x8, SYS_WRITE
-    svc #0
-    
-    mov x0, x21
-    mov x8, SYS_CLOSE
-    svc #0
-    
-    b hc_next_req
-
-serve_file:
-    /* Get File Size from cached stat_buffer (filled in got_file_fd) */
-    /* st_size is at offset 48 */
-    ldr x1, =stat_buffer
-    ldr x22, [x1, #48]      /* x22 = file size */
-    
-    /* MIME Type (SWAR) */
-    ldr x0, =file_path
-    bl get_extension
-    cmp x0, #0
-    beq set_mime_plain
-    
-    mov x19, x0
-    ldr x0, [x19]           /* Load 8 bytes */
-    
-    /* .html\0 = 0x006c6d74682e */
-    ldr x1, =0x6c6d74682e
-    cmp x0, x1
-    beq set_mime_html
-    
-    /* .css\0 = 0x007373632e (5 bytes) */
-    mov x2, #0xFFFFFFFFFF
-    and x3, x0, x2
-    ldr x1, =0x7373632e
-    cmp x3, x1
-    beq set_mime_css
-    
-    /* .js\0 = 0x00736a2e (4 bytes) */
-    mov w3, w0
-    ldr w1, =0x736a2e
-    cmp w3, w1
-    beq set_mime_js
-    
-    /* .png\0 = 0x00676e702e (5 bytes) */
-    and x3, x0, x2
-    ldr x1, =0x676e702e
-    cmp x3, x1
-    beq set_mime_png
-    
-    /* .jpg\0 = 0x0067706a2e (5 bytes) */
-    and x3, x0, x2
-    ldr x1, =0x67706a2e
-    cmp x3, x1
-    beq set_mime_jpg
-    
-    b set_mime_plain
-
-set_mime_html: ldr x23, =mime_html
-    b send_response
-set_mime_css: ldr x23, =mime_css
-    b send_response
-set_mime_js: ldr x23, =mime_js
-    b send_response
-set_mime_png: ldr x23, =mime_png
-    b send_response
-set_mime_jpg: ldr x23, =mime_jpg
-    b send_response
-set_mime_plain: ldr x23, =mime_plain
-
-send_response:
-    /* Log 200 */
-    mov x0, x24
-    ldr x1, =req_buffer
-    add x1, x1, #4
-    mov x2, #200
-    bl log_request
-
-    /* PREPARE WRITEV (4 iovecs) */
-    ldr x25, =iovec_buffer
-    
-    /* iov[0]: "HTTP/1.1 200 OK..." */
-    ldr x1, =http_200_start
-    str x1, [x25]           /* iov_base */
-    ldr x1, =len_200_start
-    str x1, [x25, #8]       /* iov_len */
-    
-    /* iov[1]: MIME Type */
-    /* Need length of mime string */
-    mov x0, x23
-    bl strlen
-    str x23, [x25, #16]     /* iov_base */
-    str x0, [x25, #24]      /* iov_len */
-    
-    /* iov[2]: "Content-Length: " */
-    ldr x1, =http_content_len
-    str x1, [x25, #32]
-    ldr x1, =len_content_len
-    str x1, [x25, #40]
-    
-    /* iov[3]: Size Value */
-    mov x0, x22
-    ldr x1, =num_buffer
-    bl itoa                 /* x0 = len */
-    ldr x1, =num_buffer
-    str x1, [x25, #48]
-    str x0, [x25, #56]
-    
-    /* iov[4]: CRLF CRLF */
     ldr x1, =http_end
-    str x1, [x25, #64]
-    mov x0, #4
-    str x0, [x25, #72]
-    
-    /* Execute writev (5 iovecs) */
-    mov x0, x20             /* fd */
-    mov x1, x25             /* iovec ptr */
-    mov x2, #5              /* count */
-    mov x8, SYS_WRITEV
+    mov x2, #4
+    mov x8, SYS_WRITE
     svc #0
     
-    /* Send File (sendfile) */
-    mov x0, x20
-    mov x1, x21
-    mov x2, #0              /* offset = NULL */
-    mov x3, x22             /* count = size */
+    /* 6. Send file content using sendfile */
+    ldr x0, =sendfile_offset
+    str xzr, [x0]            /* offset = 0 */
+    mov x0, x20              /* out fd */
+    mov x1, x21              /* in fd */
+    ldr x2, =sendfile_offset /* offset ptr */
+    mov x3, x22              /* count */
     mov x8, SYS_SENDFILE
     svc #0
     
@@ -490,94 +253,121 @@ send_response:
     mov x0, x21
     mov x8, SYS_CLOSE
     svc #0
-    
-    b hc_next_req
+    b hc_close_final
 
-do_proxy:
-    bl connect_to_upstream
-    cmp x0, #0
-    blt send_502
-    mov x21, x0     /* x21 = upstream_fd */
-    
-    /* Log 200 (Proxy) */
-    mov x0, x24
-    ldr x1, =req_buffer
-    add x1, x1, #4
-    mov x2, #200
-    bl log_request
-    
-    /* Forward Request */
-    mov x0, x21
-    ldr x1, =req_buffer
-    mov x2, x22
+/* ------------------------------------------------------------------------- */
+/* Error Handlers */
+/* ------------------------------------------------------------------------- */
+send_400:
+    mov x0, x20
+    ldr x1, =http_400
+    ldr x2, =len_400
     mov x8, SYS_WRITE
-    svc #0
-    
-proxy_loop:
-    mov x0, x21     /* upstream */
-    ldr x1, =req_buffer
-    mov x2, #2048
-    mov x8, SYS_READ
-    svc #0
-    
-    cmp x0, #0
-    ble proxy_done
-    
-    mov x2, x0      /* len */
-    mov x0, x20     /* client */
-    ldr x1, =req_buffer
-    mov x8, SYS_WRITE
-    svc #0
-    
-    b proxy_loop
-
-proxy_done:
-    mov x0, x21
-    mov x8, SYS_CLOSE
     svc #0
     b hc_close_final
 
-send_502:
-    /* Log 502 */
-    mov x0, x24
-    ldr x1, =req_buffer
-    add x1, x1, #4
-    mov x2, #502
-    bl log_request
-
+send_403:
     mov x0, x20
-    ldr x1, =http_502
-    ldr x2, =len_502
+    ldr x1, =http_403
+    ldr x2, =len_403
     mov x8, SYS_WRITE
     svc #0
-    b hc_next_req
+    b hc_close_final
 
 send_404:
-    /* Log 404 */
-    mov x0, x24
-    ldr x1, =req_buffer
-    add x1, x1, #4
-    mov x2, #404
-    bl log_request
-
     mov x0, x20
     ldr x1, =http_404
     ldr x2, =len_404
     mov x8, SYS_WRITE
     svc #0
-    b hc_next_req
-
-hc_next_req:
-    /* Loop back for Keep-Alive */
-    b hc_loop
+    b hc_close_final
 
 hc_close_final:
     mov x0, x20
     mov x8, SYS_CLOSE
     svc #0
     
-    ldr x23, [sp, #48]
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
     ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #64
+    ldp x29, x30, [sp], #96
+    ret
+
+/* ------------------------------------------------------------------------- */
+/* Helpers */
+/* ------------------------------------------------------------------------- */
+parse_request:
+    /* Find space */
+    mov x1, x0
+    mov x2, #0
+pr_loop:
+    ldrb w3, [x1, x2]
+    cbz w3, pr_err
+    cmp w3, #32     /* Space */
+    beq pr_found_method
+    add x2, x2, #1
+    cmp x2, #10     /* Method too long? */
+    bge pr_err
+    b pr_loop
+pr_found_method:
+    add x1, x1, x2  /* Space after method */
+    add x1, x1, #1  /* Start of path */
+    
+    /* Copy path to req_path */
+    ldr x4, =req_path
+    mov x5, #0
+pr_path_loop:
+    ldrb w3, [x1, x5]
+    cbz w3, pr_done
+    cmp w3, #32     /* Space */
+    beq pr_path_done
+    strb w3, [x4, x5]
+    add x5, x5, #1
+    cmp x5, #255
+    bge pr_path_done
+    b pr_path_loop
+pr_path_done:
+    strb wzr, [x4, x5] /* Null terminate */
+    
+    /* Check if path is empty -> / */
+    cmp x5, #0
+    bne pr_ok
+    mov w3, #47     /* / */
+    strb w3, [x4]
+    strb wzr, [x4, #1]
+    
+pr_ok:
+    mov x0, #0
+    ret
+pr_done:
+    strb wzr, [x4, x5]
+    b pr_ok
+
+pr_err:
+    mov x0, #-1
+    ret
+
+check_traversal:
+    mov x1, x0
+    mov x2, #0
+ct_loop:
+    ldrb w3, [x1, x2]
+    cbz w3, ct_ok
+    cmp w3, #46     /* . */
+    beq ct_dot
+    add x2, x2, #1
+    b ct_loop
+ct_dot:
+    add x2, x2, #1
+    ldrb w3, [x1, x2]
+    cmp w3, #46     /* . */
+    beq ct_fail
+    b ct_loop
+ct_ok:
+    mov x0, #0
+    ret
+ct_fail:
+    mov x0, #-1
     ret

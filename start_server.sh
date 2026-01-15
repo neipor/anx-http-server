@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SERVER_BIN="./build/anx_asm_demo"
+SERVER_BIN="./build/anx"
 LOG_FILE="server.log"
 PID_FILE="server.pid"
 MAX_SIZE=$((1024 * 1024)) # 1MB

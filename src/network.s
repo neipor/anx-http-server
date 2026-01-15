@@ -43,6 +43,9 @@ server_init:
     mov x8, SYS_BIND
     svc #0
     
+    cmp x0, #0
+    blt bind_fail
+    
     /* 3.5 TCP_DEFER_ACCEPT */
     mov x0, x19
     mov x1, IPPROTO_TCP
@@ -52,11 +55,18 @@ server_init:
     mov x8, SYS_SETSOCKOPT
     svc #0
     
+    /* 3.6 Ignore SIGPIPE */
+    bl ignore_sigpipe
+
     /* 4. Listen */
     mov x0, x19
     mov x1, #4096           /* Max backlog */
     mov x8, SYS_LISTEN
     svc #0
+
+    /* 5. Set Non-Blocking (Removed for stability check) */
+    /* mov x0, x19 */
+    /* bl set_nonblocking */
     
     mov x0, x19             /* Return listen_fd */
     
@@ -64,17 +74,26 @@ server_init:
     ldp x29, x30, [sp], #16
     ret
 
+bind_fail:
+    mov x0, STDOUT
+    ldr x1, =msg_bind_fail
+    ldr x2, =len_bind_fail
+    mov x8, SYS_WRITE
+    svc #0
+    
+    mov x0, #1
+    mov x8, SYS_EXIT
+    svc #0
+
 /* accept_loop(listen_fd) */
 accept_loop:
     mov x19, x0             /* x19 = listen_fd */
-    
-    /* PREFORK CONFIGURATION */
-    mov x20, #64            /* Number of workers */
-    
+    mov x20, #64            /* x20 = worker count (64 workers) */
+
 spawn_workers:
     cmp x20, #0
-    beq monitor_children    /* All workers spawned, parent waits */
-    
+    beq monitor_children
+
     /* Fork Worker */
     mov x0, SIGCHLD_FLAG
     mov x1, #0
@@ -85,7 +104,7 @@ spawn_workers:
     svc #0
     
     cmp x0, #0
-    beq worker_routine      /* Child jumps to work */
+    beq worker_routine
     
     /* Parent continues spawning */
     sub x20, x20, #1
@@ -95,68 +114,70 @@ monitor_children:
     /* Parent Process: Monitor and Respawn Workers */
     
     /* wait4(-1, NULL, 0, NULL) -> pid */
-    mov x0, #-1             /* -1 = wait for any child */
-    mov x1, #0              /* status = NULL */
-    mov x2, #0              /* options = 0 */
-    mov x3, #0              /* rusage = NULL */
+    mov x0, #-1
+    mov x1, #0
+    mov x2, #0
+    mov x3, #0
     mov x8, SYS_WAIT4
     svc #0
     
     cmp x0, #0
-    ble monitor_children    /* If error or spurious wake, loop */
+    blt monitor_children
     
-    /* A child died (pid in x0). Respawn it! */
-    mov x20, #1             /* x20 = workers to spawn */
+    /* A child died. Respawn it! */
+    mov x20, #1
     b spawn_workers
 
 worker_routine:
     /* 1. Create Epoll Instance */
-    mov x0, #0              /* flags = 0 */
+    mov x0, #0
     mov x8, SYS_EPOLL_CREATE1
     svc #0
     cmp x0, #0
-    blt worker_exit         /* Fatal error */
+    blt worker_exit
     mov x21, x0             /* x21 = epoll_fd */
     
     /* 2. Add Listen Socket to Epoll with EPOLLEXCLUSIVE */
     sub sp, sp, #16
     ldr w0, =EPOLLEXCLUSIVE
     orr w0, w0, #EPOLLIN
-    str w0, [sp]            /* events */
-    str x19, [sp, #8]       /* data.fd = listen_fd */
+    str w0, [sp]
+    str x19, [sp, #8]
     
-    mov x0, x21             /* epfd */
-    mov x1, EPOLL_CTL_ADD   /* op */
-    mov x2, x19             /* fd */
-    mov x3, sp              /* event ptr */
+    mov x0, x21
+    mov x1, EPOLL_CTL_ADD
+    mov x2, x19
+    mov x3, sp
     mov x8, SYS_EPOLL_CTL
     svc #0
     
-    add sp, sp, #16         /* restore stack */
+    add sp, sp, #16
     
 epoll_loop:
     /* 3. Epoll Wait */
-    mov x0, x21             /* epfd */
-    ldr x1, =epoll_events   /* events buffer */
-    mov x2, #32             /* maxevents */
+    mov x0, x21
+    ldr x1, =epoll_events
+    mov x2, #32
     mov x3, #-1             /* timeout = infinite */
-    mov x4, #0              /* sigmask = NULL */
-    mov x5, #0              /* sigsetsize = 0 */
+    mov x4, #0
+    mov x5, #0
     mov x8, SYS_EPOLL_WAIT
     svc #0
     
     cmp x0, #0
-    ble epoll_loop          /* Retry on error/timeout */
+    beq epoll_loop          /* No events, retry */
+    cmp x0, #-EINTR
+    beq epoll_loop          /* EINTR, retry */
     
-    mov x22, x0             /* x22 = num_events */
-    ldr x23, =epoll_events  /* x23 = current event ptr */
+    mov x22, x0             /* num_events */
+    ldr x23, =epoll_events
     
 process_events:
     cmp x22, #0
     beq epoll_loop
     
     /* Load event data.fd (offset 8) */
-    ldr x24, [x23, #8]      /* x24 = event fd */
+    ldr x24, [x23, #8]
     
     /* Check if it is listen_fd */
     cmp x24, x19
@@ -176,35 +197,42 @@ do_accept:
     mov x0, x19             /* listen_fd */
     add x1, sp, #16         /* sockaddr */
     mov x2, sp              /* addrlen ptr */
-    mov x3, #0              /* flags */
+    
+    /* Enable Non-Blocking & CloExec on new socket */
+    ldr x3, =SOCK_NONBLOCK
+    ldr x4, =SOCK_CLOEXEC
+    orr x3, x3, x4
+    
     mov x8, SYS_ACCEPT4
     svc #0
     
     cmp x0, #0
     blt accept_fail
-    
-    mov x25, x0             /* x25 = client_fd */
-    
+
+    mov x25, x0             /* client_fd */
+
     /* Capture IP */
+    /*
     ldr w0, [sp, #20]
     ldr x1, =client_ip_str
     bl ip_to_str
-    
+    */
+
     add sp, sp, #32         /* Restore stack */
-    
+
     /* Add Client to Epoll */
     sub sp, sp, #16
     mov w0, EPOLLIN
     str w0, [sp]
     str x25, [sp, #8]       /* data.fd = client_fd */
-    
+
     mov x0, x21             /* epfd */
     mov x1, EPOLL_CTL_ADD
     mov x2, x25             /* fd */
     mov x3, sp              /* event ptr */
     mov x8, SYS_EPOLL_CTL
     svc #0
-    
+
     add sp, sp, #16
     b event_done
 
@@ -268,4 +296,25 @@ ctu_close_fail:
 ctu_fail:
     mov x0, #-1
     ldp x29, x30, [sp], #16
+    ret
+
+/* ignore_sigpipe() */
+ignore_sigpipe:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    
+    /* struct sigaction setup */
+    mov x0, SIG_IGN
+    str x0, [sp, #16]       /* sa_handler */
+    str xzr, [sp, #24]      /* flags / restorer / mask */
+    
+    /* rt_sigaction(SIGPIPE, &act, NULL, 8) */
+    mov x0, SIGPIPE
+    add x1, sp, #16         /* &act */
+    mov x2, #0              /* NULL */
+    mov x3, #8              /* sigsetsize */
+    mov x8, SYS_RT_SIGACTION
+    svc #0
+    
+    ldp x29, x30, [sp], #32
     ret

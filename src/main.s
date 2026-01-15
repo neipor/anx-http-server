@@ -16,6 +16,15 @@ _start:
     ldr x19, [sp]           /* x19 = argc */
     add x20, sp, #8         /* x20 = &argv[0] */
     
+    /* Calculate envp: argv + (argc + 1) * 8 */
+    add x21, x19, #1
+    lsl x21, x21, #3
+    add x21, x20, x21       /* x21 = envp */
+    
+    /* Initialize I18N (Detects Lang and sets pointers) */
+    mov x0, x21
+    bl i18n_init
+    
     mov x21, #1             /* index = 1 */
 
 parse_cli_loop:
@@ -185,8 +194,10 @@ handle_positional:
 
 print_help:
     mov x0, STDOUT
-    ldr x1, =msg_help_1
-    ldr x2, =len_help_1
+    ldr x1, =p_msg_help
+    ldr x1, [x1]        /* Load pointer to string */
+    ldr x2, =p_len_help
+    ldr x2, [x2]        /* Load length */
     mov x8, SYS_WRITE
     svc #0
     
@@ -196,24 +207,51 @@ print_help:
 
 print_version:
     mov x0, STDOUT
-    ldr x1, =msg_version
-    ldr x2, =len_version
+    ldr x1, =msg_version_current
+    ldr x2, =len_version_current
     mov x8, SYS_WRITE
     svc #0
     
+    mov x0, #10
+    strb w0, [sp, #-16]!
+    mov x0, STDOUT
+    mov x1, sp
+    mov x2, #1
+    mov x8, SYS_WRITE
+    svc #0
+    add sp, sp, #16
+
     mov x0, #0
     mov x8, SYS_EXIT
     svc #0
 
 start_server_label:
-    /* Print Info */
+    /* 1. Print Banner Title "✨ ANX Web Server " */
     mov x0, STDOUT
-    ldr x1, =msg_start
-    ldr x2, =len_start
+    ldr x1, =p_msg_welcome_title
+    ldr x1, [x1]
+    ldr x2, =p_len_welcome_title
+    ldr x2, [x2]
     mov x8, SYS_WRITE
     svc #0
     
-    /* Print Port */
+    /* 2. Print Dynamic Git Version */
+    mov x0, STDOUT
+    ldr x1, =msg_version_current
+    ldr x2, =len_version_current
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* 3. Print Banner Description */
+    mov x0, STDOUT
+    ldr x1, =p_msg_welcome_desc
+    ldr x1, [x1]
+    ldr x2, =p_len_welcome_desc
+    ldr x2, [x2]
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Port */
     mov x0, STDOUT
     ldr x1, =msg_port
     ldr x2, =len_msg_port
@@ -231,13 +269,7 @@ start_server_label:
     mov x8, SYS_WRITE
     svc #0
     
-    mov x0, STDOUT
-    ldr x1, =msg_newline
-    mov x2, #1
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* Print Root */
+    /* Root */
     mov x0, STDOUT
     ldr x1, =msg_root
     ldr x2, =len_msg_root
@@ -252,6 +284,14 @@ start_server_label:
     mov x8, SYS_WRITE
     svc #0
     
+    /* Workers Message */
+    mov x0, STDOUT
+    ldr x1, =msg_workers
+    ldr x2, =len_msg_workers
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Newline */
     mov x0, STDOUT
     ldr x1, =msg_newline
     mov x2, #1

@@ -7,12 +7,16 @@
 .global strlen
 .global strcmp
 .global strstr
+.global has_dotdot
 .global get_extension
 .global atoi
 .global itoa
 .global htons
 .global ntohs
 .global log_request
+.global ip_to_str
+.global get_time_str
+.global set_nonblocking
 
 .text
 
@@ -172,6 +176,32 @@ strstr_exit:
     ldp x19, x20, [sp], #16
     ret
 
+/* has_dotdot(str) -> 1 if has "..", 0 if not */
+has_dotdot:
+    mov x1, x0
+hd_loop:
+    ldrb w2, [x1]
+    cmp w2, #0
+    beq hd_not_found
+    
+    cmp w2, #'.'
+    bne hd_next
+    
+    ldrb w3, [x1, #1]
+    cmp w3, #'.'
+    beq hd_found
+    
+hd_next:
+    add x1, x1, #1
+    b hd_loop
+
+hd_found:
+    mov x0, #1
+    ret
+hd_not_found:
+    mov x0, #0
+    ret
+
 /* get_extension(filename) -> ptr to dot or NULL */
 get_extension:
     mov x1, x0      /* current ptr */
@@ -258,17 +288,11 @@ ntohs:
     rev16 w0, w0
     ret
 
-.global ip_to_str
-.global get_time_str
-.global log_request
-.global set_nonblocking
-
-.text
-
 /* set_nonblocking(fd) -> 0 or -1 */
 set_nonblocking:
-    stp x29, x30, [sp, #-16]!
+    stp x29, x30, [sp, #-32]!
     mov x29, sp
+    stp x19, x20, [sp, #16]
     mov x19, x0     /* fd */
     
     /* Get Flags */
@@ -293,11 +317,13 @@ set_nonblocking:
     svc #0
     
     mov x0, #0
-    ldp x29, x30, [sp], #16
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
     ret
 snb_fail:
     mov x0, #-1
-    ldp x29, x30, [sp], #16
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
     ret
 
 /* ip_to_str(uint32 ip, char* buf) */
