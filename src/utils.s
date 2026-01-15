@@ -371,6 +371,92 @@ in_done:
     ldp x29, x30, [sp], #16
     ret
 
+/* daemonize() */
+.global daemonize
+daemonize:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    
+    /* 1. Fork */
+    mov x0, SIGCHLD_FLAG
+    mov x1, #0
+    mov x2, #0
+    mov x3, #0
+    mov x4, #0
+    mov x8, SYS_CLONE
+    svc #0
+    
+    cmp x0, #0
+    blt dae_fail    /* Error */
+    bgt dae_parent  /* Parent */
+    
+    /* Child */
+    /* 2. Setsid */
+    mov x8, SYS_SETSID
+    svc #0
+    
+    /* 3. Redirect Stdin/out/err to /dev/null */
+    mov x0, AT_FDCWD
+    adr x1, dev_null
+    mov x2, #2          /* O_RDWR = 2 */
+    mov x3, #0
+    mov x8, SYS_OPENAT
+    svc #0
+    
+    cmp x0, #0
+    blt dae_done /* If failed */
+    mov x19, x0     /* null_fd */
+    
+    /* dup3(null_fd, 0, 0) */
+    mov x0, x19
+    mov x1, #0
+    mov x2, #0
+    mov x8, SYS_DUP3
+    svc #0
+    
+    /* dup3(null_fd, 1, 0) */
+    mov x0, x19
+    mov x1, #1
+    mov x2, #0
+    mov x8, SYS_DUP3
+    svc #0
+    
+    /* dup3(null_fd, 2, 0) */
+    mov x0, x19
+    mov x1, #2
+    mov x2, #0
+    mov x8, SYS_DUP3
+    svc #0
+    
+    /* Close null_fd if > 2 */
+    cmp x19, #2
+    ble dae_done
+    mov x0, x19
+    mov x8, SYS_CLOSE
+    svc #0
+
+dae_done:
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+dae_parent:
+    /* Parent Exits */
+    mov x0, #0
+    mov x8, SYS_EXIT
+    svc #0
+
+dae_fail:
+    mov x0, #-1
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+    .align 4
+dev_null: .asciz "/dev/null"
+    .align 4
+
 /* htons(short) -> short (swap bytes) */
 htons:
     rev16 w0, w0

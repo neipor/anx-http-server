@@ -124,6 +124,19 @@ parse_cli_loop:
     cmp x0, #0
     beq handle_s
     
+    /* Check -daemon / --daemon */
+    mov x0, x22
+    ldr x1, =flag_daemon
+    bl strcmp
+    cmp x0, #0
+    beq handle_daemon
+    
+    mov x0, x22
+    ldr x1, =flag_daemon_long
+    bl strcmp
+    cmp x0, #0
+    beq handle_daemon
+    
     /* Check if Positional Arg (Does not start with -) */
     ldrb w0, [x22]
     cmp w0, #'-'
@@ -179,6 +192,13 @@ handle_x:
 handle_s:
     /* Set Silent Mode */
     ldr x0, =is_silent
+    mov w1, #1
+    str w1, [x0]
+    add x21, x21, #1
+    b parse_cli_loop
+
+handle_daemon:
+    ldr x0, =is_daemon
     mov w1, #1
     str w1, [x0]
     add x21, x21, #1
@@ -297,6 +317,22 @@ start_server_label:
     mov x2, #1
     mov x8, SYS_WRITE
     svc #0
+
+    /* Check Daemon */
+    ldr x0, =is_daemon
+    ldr w0, [x0]
+    cbz w0, skip_daemon
+    
+    /* Print Daemon Msg */
+    mov x0, STDOUT
+    ldr x1, =msg_daemon
+    ldr x2, =len_msg_daemon
+    mov x8, SYS_WRITE
+    svc #0
+    
+    bl daemonize
+    
+skip_daemon:
 
     /* Write PID File */
     /* Open/Create server.pid */

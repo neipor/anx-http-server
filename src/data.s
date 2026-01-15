@@ -114,6 +114,7 @@
     flag_h:         .asciz "-h"
     flag_v:         .asciz "-v"
     flag_silent:    .asciz "-s"
+    flag_daemon:    .asciz "-daemon"
     
     flag_port_long: .asciz "--port"
     flag_dir_long:  .asciz "--dir"
@@ -122,6 +123,7 @@
     flag_help_long: .asciz "--help"
     flag_vers_long: .asciz "--version"
     flag_silent_long:.asciz "--silent"
+    flag_daemon_long:.asciz "--daemon"
 
     /* Messages */
     msg_port:       .ascii " \x1b[1;32m[LISTEN]\x1b[0m Port: \x1b[1;33m"
@@ -132,6 +134,9 @@
     
     msg_workers:    .ascii "\x1b[0m\n \x1b[1;32m[WORKER]\x1b[0m Spawning \x1b[1m64\x1b[0m worker processes...\n"
     len_msg_workers = . - msg_workers
+    
+    msg_daemon:     .ascii " \x1b[1;36m[SYSTEM]\x1b[0m Running in background (Daemon)...\n"
+    len_msg_daemon = . - msg_daemon
 
     msg_newline:    .ascii "\x1b[0m\n"
     slash_newline:  .ascii "/\r\n\r\n"
@@ -144,6 +149,7 @@
     col_reset:      .asciz "\x1b[0m"
     txt_arrow:      .asciz " -> "
     is_silent:      .word 0
+    is_daemon:      .word 0
 
     msg_conf_read:  .asciz "\x1b[1;33m[DEBUG]\x1b[0m Config read\n"
     len_conf_read = . - msg_conf_read
@@ -160,6 +166,8 @@
     key_upstream_port: .asciz "upstream_port="
     
     pid_file_path: .asciz "server.pid"
+    
+    .global flag_daemon, flag_daemon_long, is_daemon, msg_daemon, len_msg_daemon
     .global pid_file_path
 
     /* HTTP Headers & Error Pages */
