@@ -104,7 +104,7 @@ close_config:
         ldr x1, =key_access_log
         bl strstr
         cmp x0, #0
-        beq rcf_end
+        beq try_upstream_ip
         
         add x0, x0, #11       /* Skip "access_log=" */
         mov x1, x0            /* Start of path */
@@ -127,10 +127,63 @@ close_config:
         /* setup args: x0=dest, x1=src */
         mov x2, x0            /* x2 = src ptr */
         mov x0, x1            /* x0 = dest ptr */
-        mov x1, x2            /* x1 = src ptr */
-        bl strcpy
+            mov x1, x2            /* x1 = src ptr */
+            bl strcpy
+            
+        try_upstream_ip:
+            ldr x0, =config_buffer
+            ldr x1, =key_upstream_ip
+            bl strstr
+            cmp x0, #0
+            beq try_upstream_port
+            
+            add x0, x0, #12       /* "upstream_ip=" */
+            mov x1, x0            /* Start of IP str */
+            
+            /* Find newline to terminate */
+        find_nl_ip:
+            ldrb w2, [x0]
+            cmp w2, #10
+            beq found_nl_ip
+            cmp w2, #0
+            beq found_nl_ip
+            add x0, x0, #1
+            b find_nl_ip
+        found_nl_ip:
+            mov w2, #0
+            strb w2, [x0]
+            
+            /* Convert String IP to int (inet_addr) - wait, we don't have inet_addr */
+            /* We have inet_ntoa (int -> str). Do we have str -> int? No. */
+            /* Use simple parser or just hardcode for now? */
+            /* I need `inet_aton` or similar. */
+            /* For now, let's implement a basic IP parser? Or just skip validation and assume 127.0.0.1? */
+            /* Actually, just parsing "127.0.0.1" manually is annoying. */
+            /* Let's skip parsing IP string to int for now and assume the user provides... wait. */
+            /* upstream_ip is .word (4 bytes). We need to convert "1.2.3.4" to integer. */
+            /* Implementation of inet_aton: */
+            /* Parse A.B.C.D */
+            
+            mov x0, x1
+            bl inet_aton
+            ldr x1, =upstream_ip
+            str w0, [x1]
         
-        b rcf_end
+        try_upstream_port:
+            ldr x0, =config_buffer
+            ldr x1, =key_upstream_port
+            bl strstr
+            cmp x0, #0
+            beq rcf_end
+            
+            add x0, x0, #14       /* "upstream_port=" */
+            bl atoi
+            bl htons
+            ldr x1, =upstream_port
+            strh w0, [x1]
+        
+            b rcf_end
+
 rcf_error:
     mov x0, STDOUT
     ldr x1, =msg_config_fail

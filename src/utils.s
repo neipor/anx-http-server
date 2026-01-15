@@ -457,6 +457,69 @@ dae_fail:
 dev_null: .asciz "/dev/null"
     .align 4
 
+/* inet_aton(char* str) -> uint32_t ip (network byte order) */
+.global inet_aton
+inet_aton:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    stp x19, x20, [sp, #-16]!
+    
+    mov x19, x0     /* str ptr */
+    mov x20, #0     /* result IP */
+    mov x21, #0     /* shift (0, 8, 16, 24) - actually network order so... */
+    /* A.B.C.D -> 0xDDCCBBAA (little endian view) or A is lowest address */
+    /* Network byte order: A is MSB? No, A is first byte. */
+    /* 127.0.0.1 -> 7F 00 00 01 in memory. */
+    /* If we store as word: 0x0100007F (LE) */
+    
+    mov x21, #0     /* byte index */
+
+ia_loop:
+    cmp x21, #4
+    beq ia_done
+    
+    /* Parse number */
+    mov x0, x19
+    bl atoi
+    
+    /* x0 is byte value */
+    /* Store byte at offset x21 */
+    /* We build the word in x20? No, let's just use stack buffer or shift? */
+    /* Easier: We return result in w0. */
+    /* We need to assemble 0xDDCCBBAA (LE) so that memory is A B C D */
+    /* So first byte (A) is LSB of w0. */
+    
+    and w0, w0, #0xFF
+    lsl w2, w21, #3     /* shift = index * 8 */
+    lsl w0, w0, w2
+    orr w20, w20, w0
+    
+    /* Find next dot */
+ia_find_dot:
+    ldrb w2, [x19]
+    cmp w2, #0
+    beq ia_check_end
+    cmp w2, #'.'
+    beq ia_dot_found
+    add x19, x19, #1
+    b ia_find_dot
+
+ia_dot_found:
+    add x19, x19, #1
+    add x21, x21, #1
+    b ia_loop
+
+ia_check_end:
+    /* If we hit null and haven't parsed 4 bytes? */
+    add x21, x21, #1
+    b ia_loop
+
+ia_done:
+    mov w0, w20
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+
 /* htons(short) -> short (swap bytes) */
 htons:
     rev16 w0, w0
@@ -646,139 +709,6 @@ a2d_ok:
     bl itoa
     add x20, x20, x0
     ldp x29, x30, [sp], #16
-    ret
-
-/* log_request(method_ptr, path_ptr, status_code_int) */
-log_request:
-    /* Check Silent Mode */
-    ldr x3, =is_silent
-    ldr w3, [x3]
-    cmp w3, #1
-    beq log_exit
-
-    stp x29, x30, [sp, #-64]!
-    mov x29, sp
-    stp x19, x20, [sp, #16]
-    stp x21, x22, [sp, #32]
-    str x23, [sp, #48]
-    
-    mov x19, x0     /* method */
-    mov x20, x1     /* path */
-    mov x21, x2     /* status code */
-    
-    ldr x22, =log_buffer /* Current ptr */
-    
-    /* 1. Time "[HH:MM:SS] " */
-    ldr x1, =time_buffer
-    bl get_time_str
-    
-    mov x0, x22
-    ldr x1, =time_buffer
-    bl strcpy
-    mov x0, x22
-    bl strlen
-    add x22, x22, x0
-    
-    /* 2. Log Prefix (Color) "[ACCESS]" */
-    mov x0, x22
-    ldr x1, =log_info_prefix
-    bl strcpy
-    mov x0, x22
-    bl strlen
-    add x22, x22, x0
-    
-    mov w0, #' '
-    strb w0, [x22], #1
-    
-    /* 3. IP Address */
-    mov x0, x22
-    ldr x1, =client_ip_str
-    bl strcpy
-    mov x0, x22
-    bl strlen
-    add x22, x22, x0
-    
-    mov w0, #' '
-    strb w0, [x22], #1
-    
-    /* 4. Method */
-    mov x0, x22
-    mov x1, x19
-    bl strcpy
-    mov x0, x22
-    bl strlen
-    add x22, x22, x0
-    
-    mov w0, #' '
-    strb w0, [x22], #1
-    
-    /* 5. Path */
-    mov x0, x22
-    mov x1, x20
-    bl strcpy
-    mov x0, x22
-    bl strlen
-    add x22, x22, x0
-    
-    /* 6. Arrow " -> " */
-    mov x0, x22
-    ldr x1, =txt_arrow
-    bl strcpy
-    mov x0, x22
-    bl strlen
-    add x22, x22, x0
-    
-    /* 7. Status Color */
-    mov x0, x21
-    cmp x0, #300
-    blt l_green
-    cmp x0, #400
-    blt l_yellow
-    b l_red
-l_green: ldr x1, =col_green
-    b l_col
-l_yellow: ldr x1, =col_yellow
-    b l_col
-l_red: ldr x1, =col_red
-l_col:
-    mov x0, x22
-    bl strcpy
-    mov x0, x22
-    bl strlen
-    add x22, x22, x0
-    
-    /* 8. Status Code */
-    mov x0, x21
-    mov x1, x22
-    bl itoa
-    add x22, x22, x0
-    
-    /* 9. Reset Color */
-    mov x0, x22
-    ldr x1, =col_reset
-    bl strcpy
-    mov x0, x22
-    bl strlen
-    add x22, x22, x0
-    
-    /* 10. Newline */
-    mov w0, #10
-    strb w0, [x22], #1
-    mov w0, #0
-    strb w0, [x22]
-    
-    /* ATOMIC WRITE */
-    mov x0, STDOUT
-    ldr x1, =log_buffer
-    mov x2, x22
-    sub x2, x2, x1  /* len = ptr - start */
-    mov x8, SYS_WRITE
-    svc #0
-    
-    ldr x23, [sp, #48]
-    ldp x21, x22, [sp, #32]
-    ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #64
     ret
 
 log_exit:

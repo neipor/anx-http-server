@@ -97,8 +97,16 @@
     upstream_ip:    .word 0
     upstream_port:  .hword 0x2d23
     
-    sockaddr:       .hword 2, 0, 0, 0, 0, 0, 0
-    upstream_addr:  .hword 2, 0, 0, 0, 0, 0, 0
+    .align 4
+    sockaddr:       .hword 2, 0
+                    .word 0         /* IP */
+                    .quad 0         /* Padding */
+    
+    .align 4
+    upstream_addr:  .hword 2, 0
+                    .word 0
+                    .quad 0
+                    
     optval:         .word 1
 
     .align 4

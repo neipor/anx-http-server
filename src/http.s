@@ -56,12 +56,19 @@ hc_loop:
     cmp x0, #0
     ble hc_close_final
     strb wzr, [x1, x0]      /* Null terminate request */
+    
+    mov x25, x0             /* Save request length */
 
     /* 2. Parse Request */
     ldr x0, =req_buffer
     bl parse_request
     cmp x0, #0
     bne send_400
+    
+    /* 2.1 Check Proxy */
+    ldr x0, =upstream_ip
+    ldr w0, [x0]
+    cbnz w0, handle_proxy   /* If upstream_ip != 0, proxy it */
     
     /* 2.5 Check Connection: close */
     ldr x0, =req_buffer
@@ -117,6 +124,56 @@ check_trav:
     beq handle_file_load_size
     
     b send_403
+
+/* ------------------------------------------------------------------------- */
+/* Proxy Handling */
+/* ------------------------------------------------------------------------- */
+handle_proxy:
+    bl connect_to_upstream
+    cmp x0, #0
+    blt send_502
+    
+    mov x21, x0             /* x21 = upstream_fd */
+    
+    /* Forward Request */
+    mov x0, x21
+    ldr x1, =req_buffer
+    mov x2, x25             /* len */
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Relay Response Loop */
+proxy_loop:
+    mov x0, x21             /* upstream */
+    ldr x1, =req_buffer     /* reuse buffer */
+    mov x2, #8192
+    mov x8, SYS_READ
+    svc #0
+    
+    cmp x0, #0
+    ble proxy_done          /* EOF or Error */
+    
+    mov x2, x0              /* bytes read */
+    mov x0, x20             /* client */
+    ldr x1, =req_buffer
+    mov x8, SYS_WRITE
+    svc #0
+    
+    b proxy_loop
+
+proxy_done:
+    /* Close Upstream */
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+    
+    /* Log Proxy Access (Status 200? Or Unknown?) */
+    ldr x0, =current_status
+    mov w1, #0              /* 0 = Proxy */
+    str w1, [x0]
+    bl log_request
+
+    b hc_close_final
 
 /* ------------------------------------------------------------------------- */
 /* File Handling */
@@ -485,6 +542,19 @@ send_404:
     
     ldr x0, =current_status
     mov w1, #404
+    str w1, [x0]
+    bl log_request
+    b hc_close_final
+
+send_502:
+    mov x0, x20
+    ldr x1, =http_502
+    ldr x2, =len_502
+    mov x8, SYS_WRITE
+    svc #0
+    
+    ldr x0, =current_status
+    mov w1, #502
     str w1, [x0]
     bl log_request
     b hc_close_final

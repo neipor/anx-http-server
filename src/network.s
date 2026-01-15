@@ -295,8 +295,9 @@ worker_exit:
 
 /* connect_to_upstream() -> upstream_fd or -1 */
 connect_to_upstream:
-    stp x29, x30, [sp, #-16]!
+    stp x29, x30, [sp, #-32]!
     mov x29, sp
+    str x19, [sp, #16]
     
     /* Create Socket */
     mov x0, AF_INET
@@ -307,6 +308,23 @@ connect_to_upstream:
     cmp x0, #0
     blt ctu_fail
     mov x19, x0     /* x19 = fd */
+    
+    /* Set Timeouts */
+    mov x0, x19
+    mov x1, SOL_SOCKET
+    mov x2, SO_RCVTIMEO
+    ldr x3, =timeout_tv
+    mov x4, #16
+    mov x8, SYS_SETSOCKOPT
+    svc #0
+    
+    mov x0, x19
+    mov x1, SOL_SOCKET
+    mov x2, SO_SNDTIMEO
+    ldr x3, =timeout_tv
+    mov x4, #16
+    mov x8, SYS_SETSOCKOPT
+    svc #0
     
     /* Setup sockaddr */
     ldr x1, =upstream_addr
@@ -329,7 +347,8 @@ connect_to_upstream:
     bne ctu_close_fail
     
     mov x0, x19
-    ldp x29, x30, [sp], #16
+    ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
     ret
 
 ctu_close_fail:
@@ -338,7 +357,8 @@ ctu_close_fail:
     svc #0
 ctu_fail:
     mov x0, #-1
-    ldp x29, x30, [sp], #16
+    ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
     ret
 
 /* ignore_sigpipe() */
