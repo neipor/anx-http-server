@@ -331,6 +331,46 @@ ih_rv_loop:
 ih_done:
     ret
 
+/* inet_ntoa(uint32_t ip_addr_ptr, char* buf) */
+/* Reads 4 bytes from ip_addr_ptr and writes "A.B.C.D" to buf */
+.global inet_ntoa
+inet_ntoa:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    stp x19, x20, [sp, #-16]!
+    
+    mov x19, x0     /* src ptr */
+    mov x20, x1     /* dst ptr */
+    
+    mov x21, #0     /* byte index */
+in_loop:
+    cmp x21, #4
+    beq in_done
+    
+    /* Load byte */
+    ldrb w0, [x19, x21]
+    
+    /* Convert to string */
+    mov x1, x20
+    bl itoa         /* itoa returns len in x0 */
+    
+    add x20, x20, x0
+    
+    cmp x21, #3
+    beq in_skip_dot
+    mov w2, #'.'
+    strb w2, [x20], #1
+in_skip_dot:
+    add x21, x21, #1
+    b in_loop
+
+in_done:
+    strb wzr, [x20]
+    
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret
+
 /* htons(short) -> short (swap bytes) */
 htons:
     rev16 w0, w0

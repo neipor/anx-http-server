@@ -380,10 +380,13 @@
     client_ip_str:  .skip 32
     time_buffer:    .skip 32
     epoll_events:   .skip 512
-    iovec_buffer:   .skip 128
+    iovec_buffer:   .skip 256
     last_log_sec:   .skip 8
     timespec:       .skip 16
     act:            .skip 152
     content_len_str: .skip 32
     etag_buffer:    .skip 64
     sendfile_offset: .skip 8
+    current_status: .skip 4
+    
+    .global current_status

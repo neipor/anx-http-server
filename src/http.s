@@ -19,7 +19,30 @@ handle_client:
     stp x25, x26, [sp, #64]
     stp x27, x28, [sp, #80]
 
-    mov x20, x0             /* x20 = client_fd */
+    mov x20, x0             /* Save client_fd */
+
+    /* Resolve IP using getpeername */
+    sub sp, sp, #32
+    mov w0, #16
+    str w0, [sp, #16]       /* addrlen */
+    
+    mov x0, x20             /* fd */
+    mov x1, sp              /* sockaddr ptr */
+    add x2, sp, #16         /* addrlen ptr */
+    mov x8, SYS_GETPEERNAME
+    svc #0
+    
+    cmp x0, #0
+    bne ip_skip
+    
+    /* Convert IP (at sp + 4) */
+    add x0, sp, #4
+    ldr x1, =client_ip_str
+    bl inet_ntoa
+
+ip_skip:
+    add sp, sp, #32
+
     mov x28, #1             /* x28 = keep_alive (1=true) */
 
 hc_loop:
@@ -185,6 +208,12 @@ handle_dir:
     ldr x1, =path_buffer
     ldr x2, =req_path       /* relative path for links */
     bl serve_directory
+    
+    ldr x0, =current_status
+    mov w1, #200
+    str w1, [x0]
+    bl log_request
+    
     b hc_close_final
 
 /* ------------------------------------------------------------------------- */
@@ -372,6 +401,12 @@ sendfile_done:
     mov x8, SYS_CLOSE
     svc #0
     
+    /* Log 200 */
+    ldr x0, =current_status
+    mov w1, #200
+    str w1, [x0]
+    bl log_request
+    
     cmp x28, #1
     beq hc_loop
     b hc_close_final
@@ -402,6 +437,12 @@ send_304:
     mov x8, SYS_WRITE
     svc #0
     
+    /* Log 304 */
+    ldr x0, =current_status
+    mov w1, #304
+    str w1, [x0]
+    bl log_request
+    
     cmp x28, #1
     beq hc_loop
     b hc_close_final
@@ -415,6 +456,11 @@ send_400:
     ldr x2, =len_400
     mov x8, SYS_WRITE
     svc #0
+    
+    ldr x0, =current_status
+    mov w1, #400
+    str w1, [x0]
+    bl log_request
     b hc_close_final
 
 send_403:
@@ -423,6 +469,11 @@ send_403:
     ldr x2, =len_403
     mov x8, SYS_WRITE
     svc #0
+    
+    ldr x0, =current_status
+    mov w1, #403
+    str w1, [x0]
+    bl log_request
     b hc_close_final
 
 send_404:
@@ -431,6 +482,11 @@ send_404:
     ldr x2, =len_404
     mov x8, SYS_WRITE
     svc #0
+    
+    ldr x0, =current_status
+    mov w1, #404
+    str w1, [x0]
+    bl log_request
     b hc_close_final
 
 hc_close_final:
@@ -521,4 +577,155 @@ ct_ok:
     ret
 ct_fail:
     mov x0, #-1
+    ret
+
+/* log_request() - Logs [ACCESS] IP - METHOD PATH -> STATUS */
+log_request:
+    stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    
+    /* 1. Prefix */
+    mov x0, #1
+    ldr x1, =log_info_prefix
+    bl strlen
+    mov x2, x0
+    mov x0, #1
+    ldr x1, =log_info_prefix
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Space */
+    mov x0, #1
+    add x1, sp, #48
+    mov w2, #32
+    strb w2, [x1]
+    mov x2, #1
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 2. IP */
+    ldr x1, =client_ip_str
+    mov x0, x1
+    bl strlen
+    mov x2, x0
+    mov x0, #1
+    ldr x1, =client_ip_str
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* " - " */
+    mov x0, #1
+    add x1, sp, #48
+    mov w2, #32
+    strb w2, [x1]
+    mov w2, #'-'
+    strb w2, [x1, #1]
+    mov w2, #32
+    strb w2, [x1, #2]
+    mov x2, #3
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 3. Method */
+    ldr x19, =req_buffer
+    mov x20, #0
+log_meth_loop:
+    ldrb w2, [x19, x20]
+    cbz w2, log_meth_done
+    cmp w2, #32
+    beq log_meth_done
+    add x20, x20, #1
+    cmp x20, #10
+    blt log_meth_loop
+log_meth_done:
+    mov x0, #1
+    mov x1, x19
+    mov x2, x20
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Space */
+    mov x0, #1
+    add x1, sp, #48
+    mov w2, #32
+    strb w2, [x1]
+    mov x2, #1
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 4. Path */
+    ldr x1, =req_path
+    mov x0, x1
+    bl strlen
+    mov x2, x0
+    mov x0, #1
+    ldr x1, =req_path
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 5. Arrow */
+    mov x0, #1
+    ldr x1, =txt_arrow
+    bl strlen
+    mov x2, x0
+    mov x0, #1
+    ldr x1, =txt_arrow
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 6. Status Color */
+    ldr x21, =current_status
+    ldr w21, [x21]
+    
+    ldr x1, =col_green
+    cmp w21, #200
+    beq log_col
+    cmp w21, #304
+    beq log_col
+    ldr x1, =col_red
+    
+log_col:
+    mov x19, x1
+    mov x0, x1
+    bl strlen
+    mov x2, x0
+    mov x0, #1
+    mov x1, x19
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 7. Status Code */
+    mov x0, x21
+    ldr x1, =num_buffer
+    bl itoa
+    mov x2, x0
+    mov x0, #1
+    ldr x1, =num_buffer
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 8. Reset Color */
+    mov x0, #1
+    ldr x1, =col_reset
+    bl strlen
+    mov x2, x0
+    mov x0, #1
+    ldr x1, =col_reset
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* 9. Newline */
+    mov x0, #1
+    add x1, sp, #48
+    mov w2, #10
+    strb w2, [x1]
+    mov x2, #1
+    mov x8, SYS_WRITE
+    svc #0
+    
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #64
     ret
