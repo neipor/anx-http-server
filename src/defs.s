@@ -61,6 +61,9 @@
 .equ SO_RCVTIMEO, 20
 .equ SO_SNDTIMEO, 21
 .equ O_RDONLY, 0
+.equ O_WRONLY, 1
+.equ O_CREAT, 0x40
+.equ O_APPEND, 0x400
 .equ O_DIRECTORY, 0x4000  /* 040000 octal */
 .equ AT_FDCWD, -100
 .equ SEEK_END, 2

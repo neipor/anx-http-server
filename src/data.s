@@ -155,6 +155,7 @@
     
     key_port:       .asciz "port="
     key_root:       .asciz "root="
+    key_access_log: .asciz "access_log="
     key_upstream_ip: .asciz "upstream_ip="
     key_upstream_port: .asciz "upstream_port="
 
@@ -209,7 +210,7 @@
 
     /* 400 Bad Request */
     http_400:
-        .ascii "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 367\r\n\r\n"
+        .ascii "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 363\r\n\r\n"
         .ascii "<!DOCTYPE html><html><head><title>400 Bad Request</title><style>body{font-family:system-ui,sans-serif;color:#333;text-align:center;padding:50px}h1{font-size:3em;margin:0}hr{max-width:300px;margin:20px auto;border:0;border-top:1px solid #eee}span{font-size:0.8em;color:#999}</style></head><body><h1>400</h1><p>Bad Request</p><hr><span>ANX Server</span></body></html>"
     len_400 = . - http_400
 
@@ -219,19 +220,19 @@
 
     /* 403 Forbidden */
     http_403:
-        .ascii "HTTP/1.1 403 Forbidden\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 363\r\n\r\n"
+        .ascii "HTTP/1.1 403 Forbidden\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 361\r\n\r\n"
         .ascii "<!DOCTYPE html><html><head><title>403 Forbidden</title><style>body{font-family:system-ui,sans-serif;color:#333;text-align:center;padding:50px}h1{font-size:3em;margin:0}hr{max-width:300px;margin:20px auto;border:0;border-top:1px solid #eee}span{font-size:0.8em;color:#999}</style></head><body><h1>403</h1><p>Forbidden</p><hr><span>ANX Server</span></body></html>"
     len_403 = . - http_403
 
     /* 404 Not Found */
     http_404:
-        .ascii "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 363\r\n\r\n"
+        .ascii "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 361\r\n\r\n"
         .ascii "<!DOCTYPE html><html><head><title>404 Not Found</title><style>body{font-family:system-ui,sans-serif;color:#333;text-align:center;padding:50px}h1{font-size:3em;margin:0}hr{max-width:300px;margin:20px auto;border:0;border-top:1px solid #eee}span{font-size:0.8em;color:#999}</style></head><body><h1>404</h1><p>Not Found</p><hr><span>ANX Server</span></body></html>"
     len_404 = . - http_404
 
     /* 502 Bad Gateway */
     http_502:
-        .ascii "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 367\r\n\r\n"
+        .ascii "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 363\r\n\r\n"
         .ascii "<!DOCTYPE html><html><head><title>502 Bad Gateway</title><style>body{font-family:system-ui,sans-serif;color:#333;text-align:center;padding:50px}h1{font-size:3em;margin:0}hr{max-width:300px;margin:20px auto;border:0;border-top:1px solid #eee}span{font-size:0.8em;color:#999}</style></head><body><h1>502</h1><p>Bad Gateway</p><hr><span>ANX Server</span></body></html>"
     len_502 = . - http_502
 
@@ -388,5 +389,12 @@
     etag_buffer:    .skip 64
     sendfile_offset: .skip 8
     current_status: .skip 4
+    access_log_path: .skip 256
     
     .global current_status
+    .global access_log_path
+    .global log_fd
+    .global key_access_log
+
+.data
+    log_fd:         .word 1     /* Default to stdout (1) */

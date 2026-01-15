@@ -586,12 +586,16 @@ log_request:
     stp x19, x20, [sp, #16]
     stp x21, x22, [sp, #32]
     
+    /* Load log_fd */
+    ldr x22, =log_fd
+    ldr w22, [x22]
+    
     /* 1. Prefix */
     mov x0, #1
     ldr x1, =log_info_prefix
     bl strlen
     mov x2, x0
-    mov x0, #1
+    mov x0, x22         /* Use log_fd */
     ldr x1, =log_info_prefix
     mov x8, SYS_WRITE
     svc #0
@@ -602,6 +606,7 @@ log_request:
     mov w2, #32
     strb w2, [x1]
     mov x2, #1
+    mov x0, x22         /* Use log_fd */
     mov x8, SYS_WRITE
     svc #0
     
@@ -610,7 +615,7 @@ log_request:
     mov x0, x1
     bl strlen
     mov x2, x0
-    mov x0, #1
+    mov x0, x22         /* Use log_fd */
     ldr x1, =client_ip_str
     mov x8, SYS_WRITE
     svc #0
@@ -625,6 +630,7 @@ log_request:
     mov w2, #32
     strb w2, [x1, #2]
     mov x2, #3
+    mov x0, x22         /* Use log_fd */
     mov x8, SYS_WRITE
     svc #0
     
@@ -640,7 +646,7 @@ log_meth_loop:
     cmp x20, #10
     blt log_meth_loop
 log_meth_done:
-    mov x0, #1
+    mov x0, x22         /* Use log_fd */
     mov x1, x19
     mov x2, x20
     mov x8, SYS_WRITE
@@ -652,6 +658,7 @@ log_meth_done:
     mov w2, #32
     strb w2, [x1]
     mov x2, #1
+    mov x0, x22         /* Use log_fd */
     mov x8, SYS_WRITE
     svc #0
     
@@ -660,7 +667,7 @@ log_meth_done:
     mov x0, x1
     bl strlen
     mov x2, x0
-    mov x0, #1
+    mov x0, x22         /* Use log_fd */
     ldr x1, =req_path
     mov x8, SYS_WRITE
     svc #0
@@ -670,7 +677,7 @@ log_meth_done:
     ldr x1, =txt_arrow
     bl strlen
     mov x2, x0
-    mov x0, #1
+    mov x0, x22         /* Use log_fd */
     ldr x1, =txt_arrow
     mov x8, SYS_WRITE
     svc #0
@@ -691,7 +698,7 @@ log_col:
     mov x0, x1
     bl strlen
     mov x2, x0
-    mov x0, #1
+    mov x0, x22         /* Use log_fd */
     mov x1, x19
     mov x8, SYS_WRITE
     svc #0
@@ -701,7 +708,7 @@ log_col:
     ldr x1, =num_buffer
     bl itoa
     mov x2, x0
-    mov x0, #1
+    mov x0, x22         /* Use log_fd */
     ldr x1, =num_buffer
     mov x8, SYS_WRITE
     svc #0
@@ -711,7 +718,7 @@ log_col:
     ldr x1, =col_reset
     bl strlen
     mov x2, x0
-    mov x0, #1
+    mov x0, x22         /* Use log_fd */
     ldr x1, =col_reset
     mov x8, SYS_WRITE
     svc #0
@@ -722,6 +729,7 @@ log_col:
     mov w2, #10
     strb w2, [x1]
     mov x2, #1
+    mov x0, x22         /* Use log_fd */
     mov x8, SYS_WRITE
     svc #0
     

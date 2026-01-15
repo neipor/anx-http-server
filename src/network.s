@@ -129,6 +129,31 @@ monitor_children:
     b spawn_workers
 
 worker_routine:
+    /* Check access_log_path */
+    ldr x0, =access_log_path
+    ldrb w1, [x0]
+    cbz w1, epoll_init
+    
+    /* Open Log File */
+    mov x0, AT_FDCWD
+    ldr x1, =access_log_path
+    ldr x2, =O_WRONLY
+    ldr x3, =O_CREAT
+    orr x2, x2, x3
+    ldr x3, =O_APPEND
+    orr x2, x2, x3
+    mov x3, #420            /* 0644 */
+    mov x8, SYS_OPENAT
+    svc #0
+    
+    cmp x0, #0
+    blt epoll_init
+    
+    /* Store in log_fd */
+    ldr x1, =log_fd
+    str w0, [x1]
+
+epoll_init:
     /* 1. Create Epoll Instance */
     mov x0, #0
     mov x8, SYS_EPOLL_CREATE1
