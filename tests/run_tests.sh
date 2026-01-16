@@ -157,7 +157,8 @@ function test_cgi {
     echo "Testing CGI..."
     
     # Create Python Script
-    echo "print('Content-Type: text/plain')" > "$WWW_DIR/hello.py"
+    echo "import os" > "$WWW_DIR/hello.py"
+    echo "print('Content-Type: text/plain')" >> "$WWW_DIR/hello.py"
     echo "print('')" >> "$WWW_DIR/hello.py"
     echo "print('Hello from Python CGI')" >> "$WWW_DIR/hello.py"
     
@@ -166,6 +167,19 @@ function test_cgi {
         log_pass "CGI Execution OK"
     else
         log_fail "CGI Failed. Got: '$RESP'"
+    fi
+
+    # Test POST
+    echo "import sys" > "$WWW_DIR/post.py"
+    echo "print('Content-Type: text/plain')" >> "$WWW_DIR/post.py"
+    echo "print('')" >> "$WWW_DIR/post.py"
+    echo "sys.stdout.write(sys.stdin.read())" >> "$WWW_DIR/post.py"
+    
+    RESP=$(curl -s -X POST -d "POST_DATA" http://localhost:$PORT/post.py)
+    if [ "$RESP" == "POST_DATA" ]; then
+        log_pass "CGI POST OK"
+    else
+        log_fail "CGI POST Failed. Got: '$RESP'"
     fi
 }
 

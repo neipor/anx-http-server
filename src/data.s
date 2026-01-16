@@ -226,6 +226,8 @@
     http_end:       .ascii "\r\n\r\n"
     .global len_http_end_val
     len_http_end_val: .word 4
+    str_http_end:   .asciz "\r\n\r\n"
+    .global str_http_end
 
     /* 400 Bad Request */
     http_400:
@@ -334,6 +336,21 @@
 
     index_file:     .asciz "/index.html"
 
+    /* CGI Environment Keys */
+    cgi_env_method:  .asciz "REQUEST_METHOD="
+    cgi_env_query:   .asciz "QUERY_STRING="
+    cgi_env_path:    .asciz "PATH_INFO="
+    cgi_env_proto:   .asciz "SERVER_PROTOCOL=HTTP/1.1"
+    cgi_env_software:.asciz "SERVER_SOFTWARE=ANX/4.1"
+    cgi_env_content_len: .asciz "CONTENT_LENGTH="
+    cgi_env_content_type: .asciz "CONTENT_TYPE="
+    str_content_len_h: .asciz "Content-Length: "
+    str_content_type_h: .asciz "Content-Type: "
+
+    .global cgi_env_method, cgi_env_query, cgi_env_path, cgi_env_proto, cgi_env_software
+    .global cgi_env_content_len, cgi_env_content_type
+    .global str_content_len_h, str_content_type_h
+
     /* Templates (Directory Listing) */
     html_head:
         .ascii "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Index</title>"
@@ -392,6 +409,7 @@
     .align 4
     req_buffer:     .skip 8192
     req_path:       .skip 2048
+    query_string:   .skip 2048
     path_buffer:    .skip 2048
     file_path:      .skip 512
     num_buffer:     .skip 32
@@ -410,9 +428,12 @@
     sendfile_offset: .skip 8
     current_status: .skip 4
     access_log_path: .skip 256
+    env_buffer:     .skip 4096
     
     .global current_status
     .global access_log_path
+    .global query_string
+    .global env_buffer
     .global log_fd
     .global key_access_log
 

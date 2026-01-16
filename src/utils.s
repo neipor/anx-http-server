@@ -474,6 +474,47 @@ cv_done:
     strb wzr, [x2]
     ret
 
+/* find_header_value(req_ptr, header_name) -> ptr to value or NULL */
+.global find_header_value
+find_header_value:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    
+    mov x19, x0     /* req */
+    mov x20, x1     /* name */
+    
+    bl strstr
+    cmp x0, #0
+    beq fhv_not_found
+    
+    /* Found header name. Now skip it. */
+    mov x19, x0
+    mov x0, x20
+    bl strlen
+    add x19, x19, x0
+    
+    /* Now skip optional space */
+fhv_skip_space:
+    ldrb w2, [x19]
+    cmp w2, #32
+    bne fhv_found
+    add x19, x19, #1
+    b fhv_skip_space
+
+fhv_found:
+    mov x0, x19
+    b fhv_exit
+
+fhv_not_found:
+    mov x0, #0
+fhv_exit:
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+/* ip_to_str(uint32 ip, char* buf) */
+.global ip_to_str
 ip_to_str:
     stp x29, x30, [sp, #-32]!
     mov x29, sp

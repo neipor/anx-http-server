@@ -621,13 +621,41 @@ pr_path_loop:
     cbz w3, pr_done
     cmp w3, #32     /* Space */
     beq pr_path_done
+    cmp w3, #63     /* '?' */
+    beq pr_split_query
     strb w3, [x4, x5]
     add x5, x5, #1
     cmp x5, #255
     bge pr_path_done
     b pr_path_loop
+
+pr_split_query:
+    strb wzr, [x4, x5] /* Terminate req_path */
+    add x1, x1, x5
+    add x1, x1, #1  /* Start of query */
+    ldr x4, =query_string
+    mov x5, #0
+pr_query_loop:
+    ldrb w3, [x1, x5]
+    cbz w3, pr_done
+    cmp w3, #32
+    beq pr_query_done
+    strb w3, [x4, x5]
+    add x5, x5, #1
+    cmp x5, #255
+    bge pr_query_done
+    b pr_query_loop
+pr_query_done:
+    strb wzr, [x4, x5]
+    mov x0, #0
+    ret
+
 pr_path_done:
     strb wzr, [x4, x5] /* Null terminate */
+    
+    /* Ensure query_string is empty if no '?' */
+    ldr x4, =query_string
+    strb wzr, [x4]
     
     /* Check if path is empty -> / */
     cmp x5, #0
