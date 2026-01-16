@@ -17,6 +17,10 @@
 .global ip_to_str
 .global get_time_str
 .global set_nonblocking
+.global copy_value_until_newline
+.global inet_aton
+.global itoa_hex
+.global daemonize
 
 .text
 
@@ -28,17 +32,14 @@ scp_loop:
     strb w3, [x2], #1
     cmp w3, #0
     beq scp_done
-    
     ldrb w3, [x1], #1
     strb w3, [x2], #1
     cmp w3, #0
     beq scp_done
-    
     ldrb w3, [x1], #1
     strb w3, [x2], #1
     cmp w3, #0
     beq scp_done
-    
     ldrb w3, [x1], #1
     strb w3, [x2], #1
     cmp w3, #0
@@ -56,28 +57,12 @@ sct_find_end:
     add x2, x2, #1
     b sct_find_end
 sct_copy:
-    /* Reuse unrolled copy logic manually for speed */
+    mov x4, x1
 sct_loop:
-    ldrb w3, [x1], #1
-    strb w3, [x2], #1
-    cmp w3, #0
-    beq sct_done
-    
-    ldrb w3, [x1], #1
-    strb w3, [x2], #1
-    cmp w3, #0
-    beq sct_done
-    
-    ldrb w3, [x1], #1
-    strb w3, [x2], #1
-    cmp w3, #0
-    beq sct_done
-    
-    ldrb w3, [x1], #1
+    ldrb w3, [x4], #1
     strb w3, [x2], #1
     cmp w3, #0
     bne sct_loop
-sct_done:
     ret
 
 /* strlen(str) -> len - 4-way unrolled */
@@ -87,20 +72,15 @@ sl_loop:
     ldrb w2, [x1], #1
     cmp w2, #0
     beq sl_end_1
-    
     ldrb w2, [x1], #1
     cmp w2, #0
     beq sl_end_1
-    
     ldrb w2, [x1], #1
     cmp w2, #0
     beq sl_end_1
-    
     ldrb w2, [x1], #1
     cmp w2, #0
     bne sl_loop
-    
-    /* Found at 4th byte (offset 3 from start of loop iteration) */
 sl_end_1:
     sub x0, x1, x0
     sub x0, x0, #1
@@ -108,8 +88,8 @@ sl_end_1:
 
 /* strcmp(s1, s2) -> 0 if eq */
 strcmp:
-    mov x4, x0  /* save s1 */
-    mov x5, x1  /* save s2 */
+    mov x4, x0
+    mov x5, x1
 scmp_loop:
     ldrb w2, [x4], #1
     ldrb w3, [x5], #1
@@ -133,40 +113,30 @@ strstr:
     stp x29, x30, [sp, #-32]!
     mov x29, sp
     stp x19, x20, [sp, #16]
-    
-    mov x19, x0     /* haystack */
-    mov x20, x1     /* needle */
-    
-    /* needle len */
+    mov x19, x0
+    mov x20, x1
     mov x0, x20
     bl strlen
-    mov x3, x0      /* x3 = needle len */
+    mov x3, x0
     cmp x3, #0
     beq strstr_found_immediate
-    
 strstr_loop:
     ldrb w4, [x19]
     cmp w4, #0
     beq strstr_not_found
-    
-    /* Compare x3 bytes */
-    mov x5, #0      /* index */
+    mov x5, #0
 cmp_loop:
     cmp x5, x3
     beq strstr_found
-    
     ldrb w6, [x19, x5]
     ldrb w7, [x20, x5]
     cmp w6, w7
     bne next_char
-    
     add x5, x5, #1
     b cmp_loop
-
 next_char:
     add x19, x19, #1
     b strstr_loop
-
 strstr_found:
     mov x0, x19
     b strstr_exit
@@ -180,25 +150,21 @@ strstr_exit:
     ldp x29, x30, [sp], #32
     ret
 
-/* has_dotdot(str) -> 1 if has "..", 0 if not */
+/* has_dotdot(str) -> 1 if has ".." */
 has_dotdot:
     mov x1, x0
 hd_loop:
     ldrb w2, [x1]
     cmp w2, #0
     beq hd_not_found
-    
     cmp w2, #'.'
     bne hd_next
-    
     ldrb w3, [x1, #1]
     cmp w3, #'.'
     beq hd_found
-    
 hd_next:
     add x1, x1, #1
     b hd_loop
-
 hd_found:
     mov x0, #1
     ret
@@ -208,8 +174,8 @@ hd_not_found:
 
 /* get_extension(filename) -> ptr to dot or NULL */
 get_extension:
-    mov x1, x0      /* current ptr */
-    mov x2, #0      /* last dot ptr */
+    mov x1, x0
+    mov x2, #0
 ge_loop:
     ldrb w3, [x1]
     cmp w3, #0
@@ -228,7 +194,7 @@ ge_done:
 
 /* atoi(str) -> int */
 atoi:
-    mov x1, #0      /* result */
+    mov x1, #0
     mov x2, #10
 at_loop:
     ldrb w3, [x0], #1
@@ -283,39 +249,30 @@ rv_loop_l:
 rv_dn_l: ret
 
 /* itoa_hex(uint64 val, char* buf) -> len */
-.global itoa_hex
 itoa_hex:
-    mov x2, x1      /* buf */
-    mov x3, x0      /* val */
-    mov x4, #0      /* len */
-    
+    mov x2, x1
+    mov x3, x0
+    mov x4, #0
     cmp x3, #0
     bne ih_loop
     mov w5, #'0'
     strb w5, [x2]
     mov x0, #1
     ret
-
 ih_loop:
     cmp x3, #0
     beq ih_rev
-    
     and x5, x3, #0xF
     cmp x5, #10
     blt ih_digit
-    /* 10 -> 'A' (65). '0' is 48. */
-    /* We add '0' (48) later. So we need result to be 17 (17+48=65). */
-    /* x5 is 10. We need 17. Add 7. */
-    add x5, x5, #7
+    add x5, x5, #7 /* 10+7+48=65('A') */
 ih_digit:
     add x5, x5, #'0'
     strb w5, [x2, x4]
     add x4, x4, #1
     lsr x3, x3, #4
     b ih_loop
-
 ih_rev:
-    /* Reuse reverse logic from itoa if possible, but registers differ. Inline it. */
     mov x0, x4
     mov x8, #0
     sub x9, x4, #1
@@ -333,30 +290,21 @@ ih_done:
     ret
 
 /* inet_ntoa(uint32_t ip_addr_ptr, char* buf) */
-/* Reads 4 bytes from ip_addr_ptr and writes "A.B.C.D" to buf */
 .global inet_ntoa
 inet_ntoa:
     stp x29, x30, [sp, #-16]!
     mov x29, sp
     stp x19, x20, [sp, #-16]!
-    
-    mov x19, x0     /* src ptr */
-    mov x20, x1     /* dst ptr */
-    
-    mov x21, #0     /* byte index */
+    mov x19, x0
+    mov x20, x1
+    mov x21, #0
 in_loop:
     cmp x21, #4
     beq in_done
-    
-    /* Load byte */
     ldrb w0, [x19, x21]
-    
-    /* Convert to string */
     mov x1, x20
-    bl itoa         /* itoa returns len in x0 */
-    
+    bl itoa
     add x20, x20, x0
-    
     cmp x21, #3
     beq in_skip_dot
     mov w2, #'.'
@@ -364,22 +312,17 @@ in_loop:
 in_skip_dot:
     add x21, x21, #1
     b in_loop
-
 in_done:
     strb wzr, [x20]
-    
     ldp x19, x20, [sp], #16
     ldp x29, x30, [sp], #16
     ret
 
 /* daemonize() */
-.global daemonize
 daemonize:
     stp x29, x30, [sp, #-32]!
     mov x29, sp
     stp x19, x20, [sp, #16]
-    
-    /* 1. Fork */
     mov x0, SIGCHLD_FLAG
     mov x1, #0
     mov x2, #0
@@ -387,67 +330,48 @@ daemonize:
     mov x4, #0
     mov x8, SYS_CLONE
     svc #0
-    
     cmp x0, #0
-    blt dae_fail    /* Error */
-    bgt dae_parent  /* Parent */
-    
-    /* Child */
-    /* 2. Setsid */
+    blt dae_fail
+    bgt dae_parent
     mov x8, SYS_SETSID
     svc #0
-    
-    /* 3. Redirect Stdin/out/err to /dev/null */
     mov x0, AT_FDCWD
     adr x1, dev_null
-    mov x2, #2          /* O_RDWR = 2 */
+    mov x2, #2
     mov x3, #0
     mov x8, SYS_OPENAT
     svc #0
-    
     cmp x0, #0
-    blt dae_done /* If failed */
-    mov x19, x0     /* null_fd */
-    
-    /* dup3(null_fd, 0, 0) */
+    blt dae_done
+    mov x19, x0
     mov x0, x19
     mov x1, #0
     mov x2, #0
     mov x8, SYS_DUP3
     svc #0
-    
-    /* dup3(null_fd, 1, 0) */
     mov x0, x19
     mov x1, #1
     mov x2, #0
     mov x8, SYS_DUP3
     svc #0
-    
-    /* dup3(null_fd, 2, 0) */
     mov x0, x19
     mov x1, #2
     mov x2, #0
     mov x8, SYS_DUP3
     svc #0
-    
-    /* Close null_fd if > 2 */
     cmp x19, #2
     ble dae_done
     mov x0, x19
     mov x8, SYS_CLOSE
     svc #0
-
 dae_done:
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
-
 dae_parent:
-    /* Parent Exits */
     mov x0, #0
     mov x8, SYS_EXIT
     svc #0
-
 dae_fail:
     mov x0, #-1
     ldp x19, x20, [sp, #16]
@@ -458,44 +382,23 @@ dae_fail:
 dev_null: .asciz "/dev/null"
     .align 4
 
-/* inet_aton(char* str) -> uint32_t ip (network byte order) */
-.global inet_aton
+/* inet_aton(char* str) -> uint32_t ip */
 inet_aton:
     stp x29, x30, [sp, #-16]!
     mov x29, sp
     stp x19, x20, [sp, #-16]!
-    
-    mov x19, x0     /* str ptr */
-    mov x20, #0     /* result IP */
-    mov x21, #0     /* shift (0, 8, 16, 24) - actually network order so... */
-    /* A.B.C.D -> 0xDDCCBBAA (little endian view) or A is lowest address */
-    /* Network byte order: A is MSB? No, A is first byte. */
-    /* 127.0.0.1 -> 7F 00 00 01 in memory. */
-    /* If we store as word: 0x0100007F (LE) */
-    
-    mov x21, #0     /* byte index */
-
+    mov x19, x0
+    mov x20, #0
+    mov x21, #0
 ia_loop:
     cmp x21, #4
     beq ia_done
-    
-    /* Parse number */
     mov x0, x19
     bl atoi
-    
-    /* x0 is byte value */
-    /* Store byte at offset x21 */
-    /* We build the word in x20? No, let's just use stack buffer or shift? */
-    /* Easier: We return result in w0. */
-    /* We need to assemble 0xDDCCBBAA (LE) so that memory is A B C D */
-    /* So first byte (A) is LSB of w0. */
-    
     and w0, w0, #0xFF
-    lsl w2, w21, #3     /* shift = index * 8 */
+    lsl w2, w21, #3
     lsl w0, w0, w2
     orr w20, w20, w0
-    
-    /* Find next dot */
 ia_find_dot:
     ldrb w2, [x19]
     cmp w2, #0
@@ -504,61 +407,44 @@ ia_find_dot:
     beq ia_dot_found
     add x19, x19, #1
     b ia_find_dot
-
 ia_dot_found:
     add x19, x19, #1
     add x21, x21, #1
     b ia_loop
-
 ia_check_end:
-    /* If we hit null and haven't parsed 4 bytes? */
     add x21, x21, #1
     b ia_loop
-
 ia_done:
     mov w0, w20
     ldp x19, x20, [sp], #16
     ldp x29, x30, [sp], #16
     ret
 
-/* htons(short) -> short (swap bytes) */
 htons:
     rev16 w0, w0
     ret
-
-/* ntohs(short) -> short */
 ntohs:
     rev16 w0, w0
     ret
 
-/* set_nonblocking(fd) -> 0 or -1 */
 set_nonblocking:
     stp x29, x30, [sp, #-32]!
     mov x29, sp
     stp x19, x20, [sp, #16]
-    mov x19, x0     /* fd */
-    
-    /* Get Flags */
+    mov x19, x0
     mov x1, F_GETFL
     mov x2, #0
     mov x8, SYS_FCNTL
     svc #0
     cmp x0, #0
     blt snb_fail
-    
-    mov x20, x0     /* flags */
-    
-    /* Add O_NONBLOCK */
+    mov x20, x0
     mov x2, O_NONBLOCK
     orr x2, x20, x2
-    
-    /* Set Flags */
     mov x0, x19
     mov x1, F_SETFL
-    /* x2 already set */
     mov x8, SYS_FCNTL
     svc #0
-    
     mov x0, #0
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
@@ -569,161 +455,112 @@ snb_fail:
     ldp x29, x30, [sp], #32
     ret
 
-/* copy_value_until_newline(dest, src) */
-/* Copies from src to dest until \n or \0 is found. Null terminates dest. */
-.global copy_value_until_newline
 copy_value_until_newline:
-    mov x2, x0  /* dest */
-    mov x3, x1  /* src */
+    mov x2, x0
+    mov x3, x1
 cv_loop:
     ldrb w4, [x3], #1
     cmp w4, #0
     beq cv_done
     cmp w4, #10
     beq cv_done
-    cmp w4, #13 /* \r */
+    cmp w4, #13
     beq cv_skip
-    
     strb w4, [x2], #1
     b cv_loop
 cv_skip:
-    /* Skip CR, continue */
     b cv_loop
 cv_done:
     strb wzr, [x2]
     ret
 
-/* ip_to_str(uint32 ip, char* buf) */
 ip_to_str:
     stp x29, x30, [sp, #-32]!
     mov x29, sp
     stp x19, x20, [sp, #16]
-    
-    mov x19, x0     /* IP */
-    mov x20, x1     /* Buf */
-    
-    /* Byte 0 */
+    mov x19, x0
+    mov x20, x1
     and w0, w19, #0xFF
     mov x1, x20
     bl itoa
     add x20, x20, x0
-    
     mov w2, #'.'
     strb w2, [x20], #1
-    
-    /* Byte 1 */
     lsr w0, w19, #8
     and w0, w0, #0xFF
     mov x1, x20
     bl itoa
     add x20, x20, x0
-    
     mov w2, #'.'
     strb w2, [x20], #1
-    
-    /* Byte 2 */
     lsr w0, w19, #16
     and w0, w0, #0xFF
     mov x1, x20
     bl itoa
     add x20, x20, x0
-    
     mov w2, #'.'
     strb w2, [x20], #1
-    
-    /* Byte 3 */
     lsr w0, w19, #24
     and w0, w0, #0xFF
     mov x1, x20
     bl itoa
     add x20, x20, x0
-    
     mov w2, #0
     strb w2, [x20]
-    
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
 
-/* get_time_str(char* buf) */
 get_time_str:
     stp x29, x30, [sp, #-32]!
     mov x29, sp
     stp x19, x20, [sp, #16]
-    
-    mov x19, x1     /* buf */
-    
-    /* clock_gettime(0, &timespec) */
-    mov x0, #0      /* CLOCK_REALTIME */
+    mov x19, x1
+    mov x0, #0
     ldr x1, =timespec
-    mov x8, #113    /* SYS_CLOCK_GETTIME */
+    mov x8, #113
     svc #0
-    
     ldr x1, =timespec
-    ldr x0, [x1]    /* tv_sec */
-    
-    /* Check Cache */
+    ldr x0, [x1]
     ldr x2, =last_log_sec
     ldr x3, [x2]
     cmp x0, x3
-    beq gt_done     /* Cache hit, buffer already valid */
-    
-    str x0, [x2]    /* Update cache key */
-    
-    /* Calculate HH:MM:SS */
-    /* Day seconds = 86400 */
+    beq gt_done
+    str x0, [x2]
     ldr x2, =86400
     udiv x3, x0, x2
-    msub x0, x3, x2, x0 /* x0 = sec % 86400 */
-    
-    /* Hour = x0 / 3600 */
+    msub x0, x3, x2, x0
     mov x2, #3600
-    udiv x4, x0, x2     /* x4 = HH */
-    msub x0, x4, x2, x0 /* x0 = rem */
-    
-    /* Min = x0 / 60 */
+    udiv x4, x0, x2
+    msub x0, x4, x2, x0
     mov x2, #60
-    udiv x5, x0, x2     /* x5 = MM */
-    msub x6, x5, x2, x0 /* x6 = SS */
-    
-    /* Format into buf "[HH:MM:SS] " */
+    udiv x5, x0, x2
+    msub x6, x5, x2, x0
     mov x20, x19
-    
     mov w2, #'['
     strb w2, [x20], #1
-    
-    /* HH */
     mov x0, x4
     bl append_2digits
-    
     mov w2, #':'
     strb w2, [x20], #1
-    
-    /* MM */
     mov x0, x5
     bl append_2digits
-    
     mov w2, #':'
     strb w2, [x20], #1
-    
-    /* SS */
     mov x0, x6
     bl append_2digits
-    
     mov w2, #']'
     strb w2, [x20], #1
     mov w2, #' '
     strb w2, [x20], #1
     mov w2, #0
     strb w2, [x20]
-
 gt_done:
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
 
 append_2digits:
-    /* x0 = val, x20 = buf ptr. updates x20 */
     cmp x0, #10
     bge a2d_ok
     mov w2, #'0'
@@ -734,6 +571,134 @@ a2d_ok:
     bl itoa
     add x20, x20, x0
     ldp x29, x30, [sp], #16
+    ret
+
+log_request:
+    /* Check Silent Mode */
+    ldr x3, =is_silent
+    ldr w3, [x3]
+    cmp w3, #1
+    beq log_exit
+
+    stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    str x23, [sp, #48]
+    
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    ldr x22, =log_buffer
+    
+    /* 1. Time */
+    ldr x1, =time_buffer
+    bl get_time_str
+    mov x0, x22
+    ldr x1, =time_buffer
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* 2. Prefix */
+    mov x0, x22
+    ldr x1, =log_info_prefix
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    mov w0, #' '
+    strb w0, [x22], #1
+    
+    /* 3. IP */
+    mov x0, x22
+    ldr x1, =client_ip_str
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    mov w0, #' '
+    strb w0, [x22], #1
+    
+    /* 4. Method */
+    mov x0, x22
+    mov x1, x19
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    mov w0, #' '
+    strb w0, [x22], #1
+    
+    /* 5. Path */
+    mov x0, x22
+    mov x1, x20
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* 6. Arrow */
+    mov x0, x22
+    ldr x1, =txt_arrow
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* 7. Status */
+    mov x0, x21
+    cmp x0, #300
+    blt l_green
+    cmp x0, #400
+    blt l_yellow
+    b l_red
+l_green: ldr x1, =col_green
+    b l_col
+l_yellow: ldr x1, =col_yellow
+    b l_col
+l_red: ldr x1, =col_red
+l_col:
+    mov x0, x22
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* Status Code */
+    mov x0, x21
+    mov x1, x22
+    bl itoa
+    add x22, x22, x0
+    
+    /* Reset */
+    mov x0, x22
+    ldr x1, =col_reset
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+    
+    /* Newline */
+    mov w0, #10
+    strb w0, [x22], #1
+    mov w0, #0
+    strb w0, [x22]
+    
+    /* Write */
+    ldr x0, =log_fd
+    ldr w0, [x0]
+    ldr x1, =log_buffer
+    mov x2, x22
+    sub x2, x2, x1
+    mov x8, SYS_WRITE
+    svc #0
+    
+    ldr x23, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #64
     ret
 
 log_exit:

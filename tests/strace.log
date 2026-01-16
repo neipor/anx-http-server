@@ -1,0 +1,162 @@
+7682  execve("/home/hu/code/aarch64_http_server/tests/../build/anx", ["/home/hu/code/aarch64_http_serve"..., "-c", "/home/hu/code/aarch64_http_serve"...], 0xffffc6758c18 /* 40 vars */) = 0
+7682  openat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/test.conf", O_RDONLY) = 3
+7682  read(3, "port=9090\nroot=/home/hu/code/aar"..., 4095) = 131
+7682  write(1, "\33[1;33m[DEBUG]\33[0m Config read\n\0", 32) = 32
+7682  close(3)                          = 0
+7682  write(1, "\n \33[1;36m\342\234\250 ANX Web Server\33[0m "..., 37) = 37
+7682  write(1, "5a215f0-dirty", 13)     = 13
+7682  write(1, "\33[0m\n \33[32mHigh-Performance AArc"..., 116) = 116
+7682  write(1, " \33[1;32m[LISTEN]\33[0m Port: \33[1;3"..., 34) = 34
+7682  write(1, "9090", 4)               = 4
+7682  write(1, "\33[0m\n \33[1;32m[CONFIG]\33[0m Root: "..., 39) = 39
+7682  write(1, "/home/hu/code/aarch64_http_serve"..., 48) = 48
+7682  write(1, "\33[0m\n \33[1;32m[WORKER]\33[0m Spawni"..., 66) = 66
+7682  write(1, "\33", 1)                = 1
+7682  openat(AT_FDCWD, "server.pid", O_WRONLY|O_CREAT|O_TRUNC, 0644) = 3
+7682  getpid()                          = 7682
+7682  write(3, "7682", 4)               = 4
+7682  close(3)                          = 0
+7682  rt_sigaction(SIGINT, {sa_handler=0x4012b8, sa_mask=[INT KILL USR1 PIPE TSTP TTOU URG XCPU XFSZ PROF WINCH SYS RTMIN RT_1 RT_2 RT_3 RT_4 RT_5 RT_6 RT_7 RT_8 RT_9 RT_10 RT_11 RT_12 RT_13 RT_14 RT_15 RT_16], sa_flags=0}, NULL, 8) = 0
+7682  rt_sigaction(SIGTERM, {sa_handler=0x4012b8, sa_mask=[INT KILL USR1 PIPE TSTP TTOU URG XCPU XFSZ PROF WINCH SYS RTMIN RT_1 RT_2 RT_3 RT_4 RT_5 RT_6 RT_7 RT_8 RT_9 RT_10 RT_11 RT_12 RT_13 RT_14 RT_15 RT_16], sa_flags=0}, NULL, 8) = 0
+7682  socket(AF_INET, SOCK_STREAM, IPPROTO_IP) = 3
+7682  setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
+7682  bind(3, {sa_family=AF_INET, sin_port=htons(9090), sin_addr=inet_addr("0.0.0.0")}, 16) = 0
+7682  setsockopt(3, SOL_TCP, TCP_DEFER_ACCEPT, [1], 4) = 0
+7682  rt_sigaction(SIGPIPE, {sa_handler=SIG_IGN, sa_mask=[ILL TRAP BUS USR2 TSTP TTOU URG XCPU XFSZ PROF WINCH SYS RTMIN RT_1 RT_2 RT_3 RT_4 RT_5 RT_6 RT_7 RT_8 RT_9 RT_10 RT_11 RT_12 RT_13 RT_14 RT_15 RT_16], sa_flags=0}, NULL, 8) = 0
+7682  listen(3, 4096)                   = 0
+7682  clone(child_stack=NULL, flags=SIGCHLD) = 7683
+7682  wait4(-1,  <unfinished ...>
+7683  openat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/test_access.log", O_WRONLY|O_CREAT|O_APPEND, 0644) = 4
+7683  epoll_create1(0)                  = 5
+7683  epoll_ctl(5, EPOLL_CTL_ADD, 3, {events=EPOLLIN|EPOLLEXCLUSIVE, data={u32=3, u64=3}}) = 0
+7683  epoll_pwait(5, [{events=EPOLLIN, data={u32=3, u64=3}}], 32, -1, NULL, 0) = 1
+7683  accept4(3, {sa_family=AF_INET, sin_port=htons(45300), sin_addr=inet_addr("127.0.0.1")}, [16], SOCK_CLOEXEC) = 6
+7683  setsockopt(6, SOL_SOCKET, SO_RCVTIMEO_OLD, "\36\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) = 0
+7683  setsockopt(6, SOL_SOCKET, SO_SNDTIMEO_OLD, "\36\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) = 0
+7683  epoll_ctl(5, EPOLL_CTL_ADD, 6, {events=EPOLLIN, data={u32=6, u64=6}}) = 0
+7683  epoll_pwait(5, [{events=EPOLLIN, data={u32=6, u64=6}}], 32, -1, NULL, 0) = 1
+7683  getpeername(6, {sa_family=AF_INET, sin_port=htons(45300), sin_addr=inet_addr("127.0.0.1")}, [16]) = 0
+7683  read(6, "GET /index.html HTTP/1.1\r\nHost: "..., 8192) = 87
+7683  newfstatat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/www_test/index.html", {st_mode=S_IFREG|0664, st_size=21, ...}, 0) = 0
+7683  openat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/www_test/index.html", O_RDONLY) = 7
+7683  write(6, "HTTP/1.1 200 OK\r\n", 17) = 17
+7683  write(6, "Connection: keep-alive\r\n", 24) = 24
+7683  write(6, "Server: ANX/4.1\r\n", 17) = 17
+7683  write(6, "ETag: \"", 7)           = 7
+7683  write(6, "15-696A2A64", 11)       = 11
+7683  write(6, "\"\r\n", 3)             = 3
+7683  write(6, "Content-Type: ", 14)    = 14
+7683  write(6, "text/html", 9)          = 9
+7683  write(6, "\r\nContent-Length: ", 18) = 18
+7683  write(6, "21", 2)                 = 2
+7683  write(6, "\r\n\r\n", 4)           = 4
+7683  sendfile(6, 7, [0] => [21], 21)   = 21
+7683  close(7)                          = 0
+7683  clock_gettime(CLOCK_REALTIME, {tv_sec=1768565350, tv_nsec=792545546}) = 0
+7683  --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0xc8} ---
+7683  +++ killed by SIGSEGV (core dumped) +++
+7682  <... wait4 resumed>NULL, 0, NULL) = 7683
+7682  --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_DUMPED, si_pid=7683, si_uid=1000, si_status=SIGSEGV, si_utime=0, si_stime=0} ---
+7682  clone(child_stack=NULL, flags=SIGCHLD) = 7731
+7682  wait4(-1,  <unfinished ...>
+7731  openat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/test_access.log", O_WRONLY|O_CREAT|O_APPEND, 0644) = 4
+7731  epoll_create1(0)                  = 5
+7731  epoll_ctl(5, EPOLL_CTL_ADD, 3, {events=EPOLLIN|EPOLLEXCLUSIVE, data={u32=3, u64=3}}) = 0
+7731  epoll_pwait(5, [{events=EPOLLIN, data={u32=3, u64=3}}], 32, -1, NULL, 0) = 1
+7731  accept4(3, {sa_family=AF_INET, sin_port=htons(45308), sin_addr=inet_addr("127.0.0.1")}, [16], SOCK_CLOEXEC) = 6
+7731  setsockopt(6, SOL_SOCKET, SO_RCVTIMEO_OLD, "\36\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) = 0
+7731  setsockopt(6, SOL_SOCKET, SO_SNDTIMEO_OLD, "\36\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) = 0
+7731  epoll_ctl(5, EPOLL_CTL_ADD, 6, {events=EPOLLIN, data={u32=6, u64=6}}) = 0
+7731  epoll_pwait(5, [{events=EPOLLIN, data={u32=6, u64=6}}], 32, -1, NULL, 0) = 1
+7731  getpeername(6, {sa_family=AF_INET, sin_port=htons(45308), sin_addr=inet_addr("127.0.0.1")}, [16]) = 0
+7731  read(6, "GET /style.css HTTP/1.1\r\nHost: l"..., 8192) = 86
+7731  newfstatat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/www_test/style.css", {st_mode=S_IFREG|0664, st_size=21, ...}, 0) = 0
+7731  openat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/www_test/style.css", O_RDONLY) = 7
+7731  write(6, "HTTP/1.1 200 OK\r\n", 17) = 17
+7731  write(6, "Connection: keep-alive\r\n", 24) = 24
+7731  write(6, "Server: ANX/4.1\r\n", 17) = 17
+7731  write(6, "ETag: \"", 7)           = 7
+7731  write(6, "15-696A2A64", 11)       = 11
+7731  write(6, "\"\r\n", 3)             = 3
+7731  write(6, "Content-Type: ", 14)    = 14
+7731  write(6, "text/css", 8)           = 8
+7731  write(6, "\r\nContent-Length: ", 18) = 18
+7731  write(6, "21", 2)                 = 2
+7731  write(6, "\r\n\r\n", 4)           = 4
+7731  sendfile(6, 7, [0] => [21], 21)   = 21
+7731  close(7)                          = 0
+7731  clock_gettime(CLOCK_REALTIME, {tv_sec=1768565352, tv_nsec=45454614}) = 0
+7731  --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0xc8} ---
+7731  +++ killed by SIGSEGV (core dumped) +++
+7682  <... wait4 resumed>NULL, 0, NULL) = 7731
+7682  --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_DUMPED, si_pid=7731, si_uid=1000, si_status=SIGSEGV, si_utime=0, si_stime=0} ---
+7682  clone(child_stack=NULL, flags=SIGCHLD) = 7747
+7682  wait4(-1,  <unfinished ...>
+7747  openat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/test_access.log", O_WRONLY|O_CREAT|O_APPEND, 0644) = 4
+7747  epoll_create1(0)                  = 5
+7747  epoll_ctl(5, EPOLL_CTL_ADD, 3, {events=EPOLLIN|EPOLLEXCLUSIVE, data={u32=3, u64=3}}) = 0
+7747  epoll_pwait(5, [{events=EPOLLIN, data={u32=3, u64=3}}], 32, -1, NULL, 0) = 1
+7747  accept4(3, {sa_family=AF_INET, sin_port=htons(45320), sin_addr=inet_addr("127.0.0.1")}, [16], SOCK_CLOEXEC) = 6
+7747  setsockopt(6, SOL_SOCKET, SO_RCVTIMEO_OLD, "\36\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) = 0
+7747  setsockopt(6, SOL_SOCKET, SO_SNDTIMEO_OLD, "\36\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) = 0
+7747  epoll_ctl(5, EPOLL_CTL_ADD, 6, {events=EPOLLIN, data={u32=6, u64=6}}) = 0
+7747  epoll_pwait(5, [{events=EPOLLIN, data={u32=6, u64=6}}], 32, -1, NULL, 0) = 1
+7747  getpeername(6, {sa_family=AF_INET, sin_port=htons(45320), sin_addr=inet_addr("127.0.0.1")}, [16]) = 0
+7747  read(6, "GET /missing.html HTTP/1.1\r\nHost"..., 8192) = 89
+7747  newfstatat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/www_test/missing.html", 0x4190b0, 0) = -1 ENOENT (No such file or directory)
+7747  write(6, "HTTP/1.1 404 Not Found\r\nContent-"..., 452) = 452
+7747  clock_gettime(CLOCK_REALTIME, {tv_sec=1768565353, tv_nsec=286387183}) = 0
+7747  --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0x194} ---
+7747  +++ killed by SIGSEGV (core dumped) +++
+7682  <... wait4 resumed>NULL, 0, NULL) = 7747
+7682  --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_DUMPED, si_pid=7747, si_uid=1000, si_status=SIGSEGV, si_utime=0, si_stime=0} ---
+7682  clone(child_stack=NULL, flags=SIGCHLD) = 7783
+7682  wait4(-1,  <unfinished ...>
+7783  openat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/test_access.log", O_WRONLY|O_CREAT|O_APPEND, 0644) = 4
+7783  epoll_create1(0)                  = 5
+7783  epoll_ctl(5, EPOLL_CTL_ADD, 3, {events=EPOLLIN|EPOLLEXCLUSIVE, data={u32=3, u64=3}}) = 0
+7783  epoll_pwait(5, [{events=EPOLLIN, data={u32=3, u64=3}}], 32, -1, NULL, 0) = 1
+7783  accept4(3, {sa_family=AF_INET, sin_port=htons(52250), sin_addr=inet_addr("127.0.0.1")}, [16], SOCK_CLOEXEC) = 6
+7783  setsockopt(6, SOL_SOCKET, SO_RCVTIMEO_OLD, "\36\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) = 0
+7783  setsockopt(6, SOL_SOCKET, SO_SNDTIMEO_OLD, "\36\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) = 0
+7783  epoll_ctl(5, EPOLL_CTL_ADD, 6, {events=EPOLLIN, data={u32=6, u64=6}}) = 0
+7783  epoll_pwait(5, [{events=EPOLLIN, data={u32=6, u64=6}}], 32, -1, NULL, 0) = 1
+7783  getpeername(6, {sa_family=AF_INET, sin_port=htons(52250), sin_addr=inet_addr("127.0.0.1")}, [16]) = 0
+7783  read(6, "GET /subdir/ HTTP/1.1\r\nHost: loc"..., 8192) = 84
+7783  newfstatat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/www_test/subdir/", {st_mode=S_IFDIR|0775, st_size=4096, ...}, 0) = 0
+7783  newfstatat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/www_test/subdir//index.html", 0x4190b0, 0) = -1 ENOENT (No such file or directory)
+7783  openat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/www_test/subdir/", O_RDONLY|O_DIRECTORY) = 7
+7783  writev(6, [{iov_base="HTTP/1.1 200 OK\r\nConnection: clo"..., iov_len=80}, {iov_base="<!DOCTYPE html><html><head><meta"..., iov_len=1506}], 2) = 1586
+7783  write(6, "<tr><td><a href=\"..\">..</a></td>"..., 79) = 79
+7783  getdents64(7, 0x413e90 /* 3 entries */, 8192) = 80
+7783  newfstatat(7, "file1.txt", {st_mode=S_IFREG|0664, st_size=0, ...}, 0) = 0
+7783  writev(6, [{iov_base="<tr><td><a href=\"", iov_len=17}, {iov_base="file1.txt", iov_len=9}, {iov_base="\">", iov_len=2}, {iov_base="file1.txt", iov_len=9}, {iov_base="</a></td><td class='d' data-v='", iov_len=31}, {iov_base="1768565353", iov_len=10}, {iov_base="'></td><td class='r' data-v='", iov_len=29}, {iov_base="0", iov_len=1}, {iov_base="'></td></tr>", iov_len=12}], 9) = 120
+7783  getdents64(7, 0x413e90 /* 0 entries */, 8192) = 0
+7783  write(6, "</tbody></table></body></html>", 30) = 30
+7783  close(7)                          = 0
+7783  clock_gettime(CLOCK_REALTIME, {tv_sec=1768565354, tv_nsec=536885421}) = 0
+7783  --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0xc8} ---
+7783  +++ killed by SIGSEGV (core dumped) +++
+7682  <... wait4 resumed>NULL, 0, NULL) = 7783
+7682  --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_DUMPED, si_pid=7783, si_uid=1000, si_status=SIGSEGV, si_utime=0, si_stime=0} ---
+7682  clone(child_stack=NULL, flags=SIGCHLD) = 7799
+7799  openat(AT_FDCWD, "/home/hu/code/aarch64_http_server/tests/test_access.log", O_WRONLY|O_CREAT|O_APPEND, 0644 <unfinished ...>
+7682  wait4(-1,  <unfinished ...>
+7799  <... openat resumed>)             = 4
+7799  epoll_create1(0)                  = 5
+7799  epoll_ctl(5, EPOLL_CTL_ADD, 3, {events=EPOLLIN|EPOLLEXCLUSIVE, data={u32=3, u64=3}}) = 0
+7799  epoll_pwait(5,  <unfinished ...>
+7682  <... wait4 resumed>NULL, 0, NULL) = ? ERESTARTSYS (To be restarted if SA_RESTART is set)
+7799  <... epoll_pwait resumed>0x419370, 32, -1, NULL, 0) = -1 EINTR (Interrupted system call)
+7682  --- SIGTERM {si_signo=SIGTERM, si_code=SI_USER, si_pid=7802, si_uid=1000} ---
+7799  --- SIGTERM {si_signo=SIGTERM, si_code=SI_USER, si_pid=7802, si_uid=1000} ---
+7682  unlinkat(AT_FDCWD, "server.pid", 0 <unfinished ...>
+7799  unlinkat(AT_FDCWD, "server.pid", 0 <unfinished ...>
+7682  <... unlinkat resumed>)           = 0
+7799  <... unlinkat resumed>)           = -1 ENOENT (No such file or directory)
+7682  exit(0 <unfinished ...>
+7799  exit(0 <unfinished ...>
+7682  <... exit resumed>)               = ?
+7799  <... exit resumed>)               = ?
+7682  +++ exited with 0 +++
+7799  +++ exited with 0 +++

@@ -171,7 +171,7 @@ proxy_done:
     ldr x0, =current_status
     mov w1, #0              /* 0 = Proxy */
     str w1, [x0]
-    bl log_request
+    /* bl log_request */
 
     b hc_close_final
 
@@ -322,8 +322,29 @@ serve_file:
     cmp x0, #0
     beq set_mime_txt
     
+    /* Check .py for CGI */
+    mov x0, x19
+    ldr x1, =ext_py
+    bl strcmp
+    cmp x0, #0
+    beq invoke_cgi
+    
     /* Default */
     b set_mime_bin
+
+invoke_cgi:
+    mov x0, x20             /* client_fd */
+    ldr x1, =path_buffer    /* script path */
+    ldr x2, =req_buffer     /* request data */
+    bl handle_cgi
+    
+    cmp x0, #0
+    blt send_502
+    
+    /* Log CGI 200? handle_cgi should log? */
+    /* If handle_cgi returns 0, assume success and it handled everything (including logging?) */
+    /* Let's assume handle_cgi returns 0 on success. */
+    b hc_close_final
 
 set_mime_html:
     ldr x25, =mime_html
@@ -647,163 +668,4 @@ ct_ok:
     ret
 ct_fail:
     mov x0, #-1
-    ret
-
-/* log_request() - Logs [ACCESS] IP - METHOD PATH -> STATUS */
-log_request:
-    stp x29, x30, [sp, #-64]!
-    mov x29, sp
-    stp x19, x20, [sp, #16]
-    stp x21, x22, [sp, #32]
-    
-    /* Load log_fd */
-    ldr x22, =log_fd
-    ldr w22, [x22]
-    
-    /* 1. Prefix */
-    mov x0, #1
-    ldr x1, =log_info_prefix
-    bl strlen
-    mov x2, x0
-    mov x0, x22         /* Use log_fd */
-    ldr x1, =log_info_prefix
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* Space */
-    mov x0, #1
-    add x1, sp, #48
-    mov w2, #32
-    strb w2, [x1]
-    mov x2, #1
-    mov x0, x22         /* Use log_fd */
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* 2. IP */
-    ldr x1, =client_ip_str
-    mov x0, x1
-    bl strlen
-    mov x2, x0
-    mov x0, x22         /* Use log_fd */
-    ldr x1, =client_ip_str
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* " - " */
-    mov x0, #1
-    add x1, sp, #48
-    mov w2, #32
-    strb w2, [x1]
-    mov w2, #'-'
-    strb w2, [x1, #1]
-    mov w2, #32
-    strb w2, [x1, #2]
-    mov x2, #3
-    mov x0, x22         /* Use log_fd */
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* 3. Method */
-    ldr x19, =req_buffer
-    mov x20, #0
-log_meth_loop:
-    ldrb w2, [x19, x20]
-    cbz w2, log_meth_done
-    cmp w2, #32
-    beq log_meth_done
-    add x20, x20, #1
-    cmp x20, #10
-    blt log_meth_loop
-log_meth_done:
-    mov x0, x22         /* Use log_fd */
-    mov x1, x19
-    mov x2, x20
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* Space */
-    mov x0, #1
-    add x1, sp, #48
-    mov w2, #32
-    strb w2, [x1]
-    mov x2, #1
-    mov x0, x22         /* Use log_fd */
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* 4. Path */
-    ldr x1, =req_path
-    mov x0, x1
-    bl strlen
-    mov x2, x0
-    mov x0, x22         /* Use log_fd */
-    ldr x1, =req_path
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* 5. Arrow */
-    mov x0, #1
-    ldr x1, =txt_arrow
-    bl strlen
-    mov x2, x0
-    mov x0, x22         /* Use log_fd */
-    ldr x1, =txt_arrow
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* 6. Status Color */
-    ldr x21, =current_status
-    ldr w21, [x21]
-    
-    ldr x1, =col_green
-    cmp w21, #200
-    beq log_col
-    cmp w21, #304
-    beq log_col
-    ldr x1, =col_red
-    
-log_col:
-    mov x19, x1
-    mov x0, x1
-    bl strlen
-    mov x2, x0
-    mov x0, x22         /* Use log_fd */
-    mov x1, x19
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* 7. Status Code */
-    mov x0, x21
-    ldr x1, =num_buffer
-    bl itoa
-    mov x2, x0
-    mov x0, x22         /* Use log_fd */
-    ldr x1, =num_buffer
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* 8. Reset Color */
-    mov x0, #1
-    ldr x1, =col_reset
-    bl strlen
-    mov x2, x0
-    mov x0, x22         /* Use log_fd */
-    ldr x1, =col_reset
-    mov x8, SYS_WRITE
-    svc #0
-    
-    /* 9. Newline */
-    mov x0, #1
-    add x1, sp, #48
-    mov w2, #10
-    strb w2, [x1]
-    mov x2, #1
-    mov x0, x22         /* Use log_fd */
-    mov x8, SYS_WRITE
-    svc #0
-    
-    ldp x21, x22, [sp, #32]
-    ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #64
     ret

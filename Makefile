@@ -18,6 +18,7 @@ SRCS = $(SRC_DIR)/config.s \
        $(SRC_DIR)/network.s \
        $(SRC_DIR)/utils.s \
        $(SRC_DIR)/i18n.s \
+       $(SRC_DIR)/cgi.s \
        $(SRC_DIR)/version.s
 
 # Objects

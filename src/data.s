@@ -56,7 +56,7 @@
 .global len_mime_json, len_mime_svg, len_mime_ico, len_mime_xml, len_mime_txt, len_mime_pdf
 .global mime_bin, len_mime_bin
 .global ext_html, ext_css, ext_js, ext_png, ext_jpg
-.global ext_json, ext_svg, ext_ico, ext_xml, ext_txt, ext_pdf
+.global ext_json, ext_svg, ext_ico, ext_xml, ext_txt, ext_pdf, ext_py
 .global index_file
 
 /* HTML Templates */
@@ -330,6 +330,7 @@
     ext_xml:        .asciz ".xml"
     ext_txt:        .asciz ".txt"
     ext_pdf:        .asciz ".pdf"
+    ext_py:         .asciz ".py"
 
     index_file:     .asciz "/index.html"
 

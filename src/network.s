@@ -88,7 +88,7 @@ bind_fail:
 /* accept_loop(listen_fd) */
 accept_loop:
     mov x19, x0             /* x19 = listen_fd */
-    mov x20, #64            /* x20 = worker count (64 workers) */
+    mov x20, #1             /* x20 = worker count (1 worker for stability) */
 
 spawn_workers:
     cmp x20, #0
