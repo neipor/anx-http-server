@@ -303,8 +303,9 @@ ih_loop:
     and x5, x3, #0xF
     cmp x5, #10
     blt ih_digit
-    add x5, x5, #39 /* 'A' - 10 - '0' = 65 - 10 - 48 = 7. Wait. 'a' is 97. */
-    /* 'A'(65) for 10. 10+55=65. */
+    /* 10 -> 'A' (65). '0' is 48. */
+    /* We add '0' (48) later. So we need result to be 17 (17+48=65). */
+    /* x5 is 10. We need 17. Add 7. */
     add x5, x5, #7
 ih_digit:
     add x5, x5, #'0'
@@ -566,6 +567,30 @@ snb_fail:
     mov x0, #-1
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
+    ret
+
+/* copy_value_until_newline(dest, src) */
+/* Copies from src to dest until \n or \0 is found. Null terminates dest. */
+.global copy_value_until_newline
+copy_value_until_newline:
+    mov x2, x0  /* dest */
+    mov x3, x1  /* src */
+cv_loop:
+    ldrb w4, [x3], #1
+    cmp w4, #0
+    beq cv_done
+    cmp w4, #10
+    beq cv_done
+    cmp w4, #13 /* \r */
+    beq cv_skip
+    
+    strb w4, [x2], #1
+    b cv_loop
+cv_skip:
+    /* Skip CR, continue */
+    b cv_loop
+cv_done:
+    strb wzr, [x2]
     ret
 
 /* ip_to_str(uint32 ip, char* buf) */
