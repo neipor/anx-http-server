@@ -153,6 +153,22 @@ function test_proxy {
     fi
 }
 
+function test_cgi {
+    echo "Testing CGI..."
+    
+    # Create Python Script
+    echo "print('Content-Type: text/plain')" > "$WWW_DIR/hello.py"
+    echo "print('')" >> "$WWW_DIR/hello.py"
+    echo "print('Hello from Python CGI')" >> "$WWW_DIR/hello.py"
+    
+    RESP=$(curl -s http://localhost:$PORT/hello.py)
+    if [ "$RESP" == "Hello from Python CGI" ]; then
+        log_pass "CGI Execution OK"
+    else
+        log_fail "CGI Failed. Got: '$RESP'"
+    fi
+}
+
 # Main Execution
 cleanup
 setup
@@ -161,6 +177,7 @@ start_server
 test_static_files
 test_directory_listing
 test_access_log
+test_cgi
 # test_proxy # TODO: Fix proxy test hang
 
 cleanup
