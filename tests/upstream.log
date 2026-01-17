@@ -1,0 +1,9 @@
+
+ [1;36m✨ ANX Web Server[0m [90mf6f7e10-dirty[0m
+ [32mHigh-Performance AArch64 Assembly Server[0m
+
+ [1;34m[SYSTEM][0m Architecture: [1mPrefork + Epoll[0m
+ [1;32m[LISTEN][0m Port: [1;33m9091[0m
+ [1;32m[CONFIG][0m Root: [1;35m.[0m
+ [1;32m[WORKER][0m Spawning [1m64[0m worker processes...
+

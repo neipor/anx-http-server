@@ -154,10 +154,30 @@ proxy_loop:
     ble proxy_done          /* EOF or Error */
     
     mov x2, x0              /* bytes read */
+    mov x25, x0             /* save len */
+    
     mov x0, x20             /* client */
     ldr x1, =req_buffer
     mov x8, SYS_WRITE
     svc #0
+    
+    /* Check if upstream sent valid response and closed? */
+    /* If upstream is HTTP/1.0 or sent Connection: close, it will close connection. */
+    /* SYS_READ returns 0 on close, so checking ble proxy_done is correct. */
+    /* Why did it hang? Maybe SYS_READ blocked? */
+    /* The upstream (upstream_test server) might be keeping connection alive. */
+    /* And we are in a loop reading from it. */
+    /* If upstream keeps alive, it won't close. We wait for more data. */
+    /* But the client (nc) might have closed its write end? */
+    /* Ideally we should relay bidirectional or parse Content-Length. */
+    /* Our simple proxy relies on upstream closing connection. */
+    /* In the test: curl -H "Connection: close". Upstream sees this. */
+    /* Upstream (ANX) sees "Connection: close", so it should close after sending response. */
+    /* So upstream_fd read should return 0. */
+    
+    /* However, if upstream doesn't close, we hang here. */
+    /* Let's verify if upstream actually closed. */
+    /* If it hung, it means upstream is waiting for something or keeping alive. */
     
     b proxy_loop
 
@@ -171,7 +191,7 @@ proxy_done:
     ldr x0, =current_status
     mov w1, #0              /* 0 = Proxy */
     str w1, [x0]
-    /* bl log_request */
+    bl log_request  /* Uncommented logging */
 
     b hc_close_final
 
@@ -341,9 +361,12 @@ invoke_cgi:
     cmp x0, #0
     blt send_502
     
-    /* Log CGI 200? handle_cgi should log? */
-    /* If handle_cgi returns 0, assume success and it handled everything (including logging?) */
-    /* Let's assume handle_cgi returns 0 on success. */
+    /* Log CGI 200 */
+    ldr x0, =current_status
+    mov w1, #200
+    str w1, [x0]
+    bl log_request
+    
     b hc_close_final
 
 set_mime_html:

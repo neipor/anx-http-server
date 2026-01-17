@@ -60,9 +60,8 @@ function start_server {
     echo "root=$WWW_DIR" >> $CONFIG_FILE
     echo "access_log=$LOG_FILE" >> $CONFIG_FILE
     
-    # $SERVER_BIN -c $CONFIG_FILE -daemon
-    # Debug: Run in foreground with strace
-    strace -f -o strace.log $SERVER_BIN -c $CONFIG_FILE &
+    # Run in foreground, redirect output
+    $SERVER_BIN -c $CONFIG_FILE > "$SCRIPT_DIR/server.log" 2>&1 &
     SERVER_PID=$!
     echo $SERVER_PID > server.pid
     
@@ -106,13 +105,13 @@ function test_directory_listing {
 
 function test_access_log {
     echo "Testing Access Log..."
+    sleep 1 # Wait for log flush
     if [ -f "$LOG_FILE" ]; then
-        echo "Log content:"
-        cat "$LOG_FILE"
         if grep -q "GET /index.html" "$LOG_FILE"; then
             log_pass "Access Log records requests"
         else
-            echo -e "${RED}[FAIL]${NC} Access Log missing entry"
+            echo -e "${RED}[FAIL]${NC} Access Log missing entry. Content:"
+            cat "$LOG_FILE"
             # log_fail "Access Log missing entry"
         fi
     else
@@ -130,7 +129,8 @@ function test_proxy {
     # Start Upstream
     UP_PORT=$((PORT + 1))
     cd "$UP_DIR"
-    $SERVER_BIN -p $UP_PORT -d . -daemon
+    # Start upstream with absolute path to bin
+    $SERVER_BIN -p $UP_PORT -d . > "$SCRIPT_DIR/upstream.log" 2>&1 &
     cd "$SCRIPT_DIR"
     
     # Start Proxy
@@ -139,17 +139,18 @@ function test_proxy {
     echo "upstream_ip=127.0.0.1" >> $CONFIG_FILE
     echo "upstream_port=$UP_PORT" >> $CONFIG_FILE
     
-    $SERVER_BIN -c $CONFIG_FILE -daemon
+    $SERVER_BIN -c $CONFIG_FILE > "$SCRIPT_DIR/proxy_server.log" 2>&1 &
     sleep 1
     
-    # RESP=$(curl -s -H "Connection: close" http://localhost:$PORT/data.txt)
-    echo -e "GET /data.txt HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" | nc -q 1 localhost $PORT > proxy_resp.txt
+    # Use curl with timeout and HTTP/1.0 (no keep-alive)
+    RESP=$(curl -s --http1.0 --max-time 5 -H "Connection: close" http://localhost:$PORT/data.txt)
     
-    if grep -q "I am upstream" proxy_resp.txt; then
+    if [ "$RESP" == "I am upstream" ]; then
         log_pass "Reverse Proxy OK"
     else
-        log_fail "Reverse Proxy Failed. Response:"
-        head -n 5 proxy_resp.txt
+        echo "Proxy Log:"
+        cat "$SCRIPT_DIR/proxy_server.log"
+        log_fail "Reverse Proxy Failed. Got: '$RESP'"
     fi
 }
 
@@ -192,7 +193,7 @@ test_static_files
 test_directory_listing
 test_access_log
 test_cgi
-# test_proxy # TODO: Fix proxy test hang
+test_proxy
 
 cleanup
 echo -e "${GREEN}All Tests Passed!${NC}"

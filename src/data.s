@@ -229,6 +229,9 @@
     str_http_end:   .asciz "\r\n\r\n"
     .global str_http_end
 
+    str_debug_log:  .asciz "LOGREQ\n"
+    .global str_debug_log
+
     /* 400 Bad Request */
     http_400:
         .ascii "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 363\r\n\r\n"
@@ -420,8 +423,12 @@
     time_buffer:    .skip 32
     epoll_events:   .skip 512
     iovec_buffer:   .skip 256
+    
+    .align 8
     last_log_sec:   .skip 8
     timespec:       .skip 16
+    
+    .align 4
     act:            .skip 152
     content_len_str: .skip 32
     etag_buffer:    .skip 64
