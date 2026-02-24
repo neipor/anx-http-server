@@ -1,0 +1,65 @@
+# GitHub Actions CI/CD for ANX Web Server
+
+name: ANX CI
+
+on:
+  push:
+    branches: [ main, master, "refactor/*" ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up QEMU for ARM64
+      uses: docker/setup-qemu-action@v2
+      with:
+        platforms: arm64
+    
+    - name: Build
+      run: |
+        make clean
+        make
+    
+    - name: Run Tests
+      run: |
+        chmod +x tests/run_tests.sh
+        ./tests/run_tests.sh
+    
+    - name: Performance Test
+      run: |
+        # Start server
+        ./build/anx -p 8080 -d www &
+        sleep 2
+        
+        # Run wrk benchmark
+        docker run --rm --network host williamyeh/wrk \
+          -t4 -c400 -d30s http://localhost:8080/
+        
+        # Stop server
+        pkill anx || true
+    
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: anx-binary
+        path: build/anx
+
+  release:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/v')
+      with:
+        files: build/anx
+        generate_release_notes: true

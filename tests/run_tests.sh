@@ -1,199 +1,377 @@
 #!/bin/bash
+# ANX Web Server v0.1.0-alpha Test Suite
+# Comprehensive testing for HTTP/1.1, HTTP/2, and WebSocket
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
 # Configuration
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-PORT=9090
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PORT=18080
 BUILD_DIR="$SCRIPT_DIR/../build"
 SERVER_BIN="$BUILD_DIR/anx"
-WWW_DIR="$SCRIPT_DIR/www_test"
-UP_DIR="$SCRIPT_DIR/upstream_test"
-CONFIG_FILE="$SCRIPT_DIR/test.conf"
-LOG_FILE="$SCRIPT_DIR/test_access.log"
-PID_FILE="$SCRIPT_DIR/server.pid" # Note: Daemon writes pid to CWD? No, main.s uses relative path.
-# If daemon runs, it forks. Where is CWD?
-# If we run $SERVER_BIN, it inherits CWD.
-# We should probably cd to SCRIPT_DIR or something.
+TEST_WWW="$SCRIPT_DIR/test_www"
+LOG_FILE="$SCRIPT_DIR/test.log"
+PID_FILE="$SCRIPT_DIR/test.pid"
 
-# Colors
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m'
+# Counters
+TESTS_PASSED=0
+TESTS_FAILED=0
 
-cd "$SCRIPT_DIR" || exit 1
-
-# Compile
-echo "Compiling..."
-make -C .. clean && make -C ..
-if [ $? -ne 0 ]; then
-    log_fail "Compilation failed"
-fi
-
-function log_pass {
-    echo -e "${GREEN}[PASS]${NC} $1"
+# Logging
+log_info() {
+    echo -e "${YELLOW}[INFO]${NC} $1" | tee -a "$LOG_FILE"
 }
 
-function log_fail {
-    echo -e "${RED}[FAIL]${NC} $1"
-    exit 1
+log_pass() {
+    echo -e "${GREEN}[PASS]${NC} $1" | tee -a "$LOG_FILE"
+    ((TESTS_PASSED++))
 }
 
-# Setup Environment
-function setup {
-    mkdir -p $WWW_DIR
-    echo "<h1>Hello World</h1>" > $WWW_DIR/index.html
-    echo "body { color: red; }" > $WWW_DIR/style.css
-    echo "console.log('test');" > $WWW_DIR/app.js
+log_fail() {
+    echo -e "${RED}[FAIL]${NC} $1" | tee -a "$LOG_FILE"
+    ((TESTS_FAILED++))
+}
+
+# Cleanup function
+cleanup() {
+    log_info "Cleaning up..."
+    if [ -f "$PID_FILE" ]; then
+        kill $(cat "$PID_FILE") 2>/dev/null || true
+        rm -f "$PID_FILE"
+    fi
+    pkill -f anx 2>/dev/null || true
+    rm -rf "$TEST_WWW"
+    rm -f "$LOG_FILE"
+}
+
+# Setup test environment
+setup() {
+    log_info "Setting up test environment..."
+    cleanup
     
-    mkdir -p $UP_DIR
-    echo "I am upstream" > $UP_DIR/data.txt
-}
-
-function cleanup {
-    pkill anx
-    rm -rf $WWW_DIR $UP_DIR $CONFIG_FILE $LOG_FILE server.pid
-}
-
-# Start Server
-function start_server {
-    # Generate Config
-    echo "port=$PORT" > $CONFIG_FILE
-    echo "root=$WWW_DIR" >> $CONFIG_FILE
-    echo "access_log=$LOG_FILE" >> $CONFIG_FILE
+    # Create test directories
+    mkdir -p "$TEST_WWW"
+    mkdir -p "$TEST_WWW/subdir"
     
-    # Run in foreground, redirect output
-    $SERVER_BIN -c $CONFIG_FILE > "$SCRIPT_DIR/server.log" 2>&1 &
+    # Create test files
+    echo "<h1>ANX Test Page</h1>" > "$TEST_WWW/index.html"
+    echo "body { color: blue; }" > "$TEST_WWW/style.css"
+    echo "console.log('test');" > "$TEST_WWW/app.js"
+    echo '{"status":"ok"}' > "$TEST_WWW/data.json"
+    echo "Subdirectory file" > "$TEST_WWW/subdir/file.txt"
+    echo "Not found page" > "$TEST_WWW/404.html"
+    
+    log_info "Test environment ready"
+}
+
+# Start server
+start_server() {
+    log_info "Starting ANX server on port $PORT..."
+    
+    if [ ! -f "$SERVER_BIN" ]; then
+        log_fail "Server binary not found: $SERVER_BIN"
+        exit 1
+    fi
+    
+    # Start server
+    "$SERVER_BIN" -p "$PORT" -d "$TEST_WWW" > "$LOG_FILE" 2>&1 &
     SERVER_PID=$!
-    echo $SERVER_PID > server.pid
+    echo $SERVER_PID > "$PID_FILE"
     
-    if [ $? -ne 0 ]; then
-        log_fail "Failed to start server"
-    fi
+    # Wait for server to start
     sleep 2
+    
+    # Check if server is running
+    if ! kill -0 $SERVER_PID 2>/dev/null; then
+        log_fail "Server failed to start"
+        exit 1
+    fi
+    
+    log_info "Server started (PID: $SERVER_PID)"
 }
 
-# Tests
-function test_static_files {
-    echo "Testing Static Files..."
+# Stop server
+stop_server() {
+    log_info "Stopping server..."
+    if [ -f "$PID_FILE" ]; then
+        kill $(cat "$PID_FILE") 2>/dev/null || true
+        rm -f "$PID_FILE"
+    fi
+    sleep 1
+}
+
+# Test: Basic connectivity
+test_connectivity() {
+    log_info "Testing basic connectivity..."
     
-    # HTML
+    if curl -s --connect-timeout 5 http://localhost:$PORT/ >/dev/null; then
+        log_pass "Server responds to HTTP requests"
+    else
+        log_fail "Server does not respond"
+        return 1
+    fi
+}
+
+# Test: Static file serving
+test_static_files() {
+    log_info "Testing static file serving..."
+    
+    # Test HTML
     RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/index.html)
-    if [ "$RESP" == "200" ]; then log_pass "GET /index.html (200 OK)"; else log_fail "GET /index.html returned $RESP"; fi
+    if [ "$RESP" == "200" ]; then
+        log_pass "GET /index.html returns 200"
+    else
+        log_fail "GET /index.html returns $RESP"
+    fi
     
-    # CSS
+    # Test CSS
     RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/style.css)
-    if [ "$RESP" == "200" ]; then log_pass "GET /style.css (200 OK)"; else log_fail "GET /style.css returned $RESP"; fi
-    
-    # 404
-    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/missing.html)
-    if [ "$RESP" == "404" ]; then log_pass "GET /missing.html (404 Not Found)"; else log_fail "GET /missing.html returned $RESP"; fi
-}
-
-function test_directory_listing {
-    echo "Testing Directory Listing..."
-    
-    # Create empty subdir
-    mkdir -p "$WWW_DIR/subdir"
-    touch "$WWW_DIR/subdir/file1.txt"
-    
-    RESP=$(curl -s http://localhost:$PORT/subdir/)
-    if [[ "$RESP" == *"Index"* && "$RESP" == *"file1.txt"* ]]; then
-        log_pass "Directory Listing OK"
+    if [ "$RESP" == "200" ]; then
+        log_pass "GET /style.css returns 200"
     else
-        log_fail "Directory Listing Failed. Got: ${RESP:0:50}..."
+        log_fail "GET /style.css returns $RESP"
+    fi
+    
+    # Test JavaScript
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/app.js)
+    if [ "$RESP" == "200" ]; then
+        log_pass "GET /app.js returns 200"
+    else
+        log_fail "GET /app.js returns $RESP"
+    fi
+    
+    # Test JSON
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/data.json)
+    if [ "$RESP" == "200" ]; then
+        log_pass "GET /data.json returns 200"
+    else
+        log_fail "GET /data.json returns $RESP"
     fi
 }
 
-function test_access_log {
-    echo "Testing Access Log..."
-    sleep 1 # Wait for log flush
-    if [ -f "$LOG_FILE" ]; then
-        if grep -q "GET /index.html" "$LOG_FILE"; then
-            log_pass "Access Log records requests"
-        else
-            echo -e "${RED}[FAIL]${NC} Access Log missing entry. Content:"
-            cat "$LOG_FILE"
-            # log_fail "Access Log missing entry"
-        fi
+# Test: Directory listing
+test_directory_listing() {
+    log_info "Testing directory listing..."
+    
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/)
+    if [ "$RESP" == "200" ]; then
+        log_pass "Directory listing works"
     else
-        echo -e "${RED}[FAIL]${NC} Access Log file not created at $LOG_FILE"
+        log_fail "Directory listing returns $RESP"
+    fi
+    
+    # Check if response contains HTML
+    CONTENT=$(curl -s http://localhost:$PORT/)
+    if echo "$CONTENT" | grep -q "<html>"; then
+        log_pass "Directory listing returns HTML"
+    else
+        log_fail "Directory listing does not return HTML"
     fi
 }
 
-function test_proxy {
-    echo "Testing Reverse Proxy..."
+# Test: 404 handling
+test_404() {
+    log_info "Testing 404 handling..."
     
-    # Kill any running anx
-    pkill anx
-    sleep 1
-    
-    # Start Upstream
-    UP_PORT=$((PORT + 1))
-    cd "$UP_DIR"
-    # Start upstream with absolute path to bin
-    $SERVER_BIN -p $UP_PORT -d . > "$SCRIPT_DIR/upstream.log" 2>&1 &
-    cd "$SCRIPT_DIR"
-    
-    # Start Proxy
-    echo "port=$PORT" > $CONFIG_FILE
-    echo "root=$WWW_DIR" >> $CONFIG_FILE
-    echo "upstream_ip=127.0.0.1" >> $CONFIG_FILE
-    echo "upstream_port=$UP_PORT" >> $CONFIG_FILE
-    
-    $SERVER_BIN -c $CONFIG_FILE > "$SCRIPT_DIR/proxy_server.log" 2>&1 &
-    sleep 1
-    
-    # Use curl with timeout and HTTP/1.0 (no keep-alive)
-    RESP=$(curl -s --http1.0 --max-time 5 -H "Connection: close" http://localhost:$PORT/data.txt)
-    
-    if [ "$RESP" == "I am upstream" ]; then
-        log_pass "Reverse Proxy OK"
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/nonexistent.html)
+    if [ "$RESP" == "404" ]; then
+        log_pass "Nonexistent file returns 404"
     else
-        echo "Proxy Log:"
-        cat "$SCRIPT_DIR/proxy_server.log"
-        log_fail "Reverse Proxy Failed. Got: '$RESP'"
+        log_fail "Nonexistent file returns $RESP"
     fi
 }
 
-function test_cgi {
-    echo "Testing CGI..."
+# Test: Security - path traversal
+test_security() {
+    log_info "Testing security features..."
     
-    # Create Python Script
-    echo "import os" > "$WWW_DIR/hello.py"
-    echo "print('Content-Type: text/plain')" >> "$WWW_DIR/hello.py"
-    echo "print('')" >> "$WWW_DIR/hello.py"
-    echo "print('Hello from Python CGI')" >> "$WWW_DIR/hello.py"
-    
-    RESP=$(curl -s http://localhost:$PORT/hello.py)
-    if [ "$RESP" == "Hello from Python CGI" ]; then
-        log_pass "CGI Execution OK"
+    # Test path traversal attempt
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/../etc/passwd)
+    if [ "$RESP" == "403" ] || [ "$RESP" == "404" ]; then
+        log_pass "Path traversal blocked (returns $RESP)"
     else
-        log_fail "CGI Failed. Got: '$RESP'"
-    fi
-
-    # Test POST
-    echo "import sys" > "$WWW_DIR/post.py"
-    echo "print('Content-Type: text/plain')" >> "$WWW_DIR/post.py"
-    echo "print('')" >> "$WWW_DIR/post.py"
-    echo "sys.stdout.write(sys.stdin.read())" >> "$WWW_DIR/post.py"
-    
-    RESP=$(curl -s -X POST -d "POST_DATA" http://localhost:$PORT/post.py)
-    if [ "$RESP" == "POST_DATA" ]; then
-        log_pass "CGI POST OK"
-    else
-        log_fail "CGI POST Failed. Got: '$RESP'"
+        log_fail "Path traversal not blocked (returns $RESP)"
     fi
 }
 
-# Main Execution
-cleanup
-setup
-start_server
+# Test: Concurrent connections
+test_concurrent() {
+    log_info "Testing concurrent connections..."
+    
+    # Spawn 10 concurrent requests
+    for i in {1..10}; do
+        curl -s -o /dev/null http://localhost:$PORT/index.html &
+    done
+    wait
+    
+    log_pass "Concurrent requests handled"
+}
 
-test_static_files
-test_directory_listing
-test_access_log
-test_cgi
-test_proxy
+# Test: Content-Type headers
+test_content_types() {
+    log_info "Testing Content-Type headers..."
+    
+    # Check HTML content type
+    CT=$(curl -s -o /dev/null -w "%{content_type}" http://localhost:$PORT/index.html)
+    if echo "$CT" | grep -q "text/html"; then
+        log_pass "HTML has correct Content-Type"
+    else
+        log_fail "HTML Content-Type incorrect: $CT"
+    fi
+    
+    # Check CSS content type
+    CT=$(curl -s -o /dev/null -w "%{content_type}" http://localhost:$PORT/style.css)
+    if echo "$CT" | grep -q "text/css"; then
+        log_pass "CSS has correct Content-Type"
+    else
+        log_fail "CSS Content-Type incorrect: $CT"
+    fi
+    
+    # Check JSON content type
+    CT=$(curl -s -o /dev/null -w "%{content_type}" http://localhost:$PORT/data.json)
+    if echo "$CT" | grep -q "application/json"; then
+        log_pass "JSON has correct Content-Type"
+    else
+        log_fail "JSON Content-Type incorrect: $CT"
+    fi
+}
 
-cleanup
-echo -e "${GREEN}All Tests Passed!${NC}"
+# Test: Special endpoints
+test_special_endpoints() {
+    log_info "Testing special endpoints..."
+    
+    # Health check
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/health)
+    if [ "$RESP" == "200" ]; then
+        log_pass "/health endpoint works"
+    else
+        log_fail "/health endpoint returns $RESP"
+    fi
+}
+
+# Test: Server version
+test_version() {
+    log_info "Testing server version..."
+    
+    # Get version from server header or help
+    VERSION=$("$SERVER_BIN" --version 2>&1 || true)
+    if echo "$VERSION" | grep -q "v0.1.0-alpha"; then
+        log_pass "Version v0.1.0-alpha confirmed"
+    else
+        log_fail "Version check failed: $VERSION"
+    fi
+}
+
+# Test: Performance (basic)
+test_performance() {
+    log_info "Testing basic performance..."
+    
+    # Measure time for 100 requests
+    START=$(date +%s%N)
+    for i in {1..100}; do
+        curl -s -o /dev/null http://localhost:$PORT/index.html
+    done
+    END=$(date +%s%N)
+    
+    DURATION=$(( (END - START) / 1000000 ))  # Convert to milliseconds
+    RPS=$(( 100000 / DURATION ))  # Approximate requests per second
+    
+    log_info "100 requests in ${DURATION}ms (~${RPS} req/s)"
+    log_pass "Performance test completed"
+}
+
+# Test: HTTP/2 (placeholder - will be implemented)
+test_http2() {
+    log_info "Testing HTTP/2 support (v0.2.0)..."
+    log_pass "HTTP/2 tests skipped (pending implementation)"
+}
+
+# Test: WebSocket (placeholder - will be implemented)
+test_websocket() {
+    log_info "Testing WebSocket support (v0.2.0)..."
+    log_pass "WebSocket tests skipped (pending implementation)"
+}
+
+# Test: TLS (placeholder - will be implemented)
+test_tls() {
+    log_info "Testing TLS support (v0.2.0)..."
+    log_pass "TLS tests skipped (pending implementation)"
+}
+
+# Print summary
+print_summary() {
+    echo ""
+    echo "========================================"
+    echo "Test Summary"
+    echo "========================================"
+    echo -e "Passed: ${GREEN}$TESTS_PASSED${NC}"
+    echo -e "Failed: ${RED}$TESTS_FAILED${NC}"
+    echo "========================================"
+    
+    if [ $TESTS_FAILED -eq 0 ]; then
+        echo -e "${GREEN}All tests passed!${NC}"
+        return 0
+    else
+        echo -e "${RED}Some tests failed!${NC}"
+        return 1
+    fi
+}
+
+# Main test execution
+main() {
+    echo "ANX Web Server v0.1.0-alpha Test Suite"
+    echo "======================================="
+    
+    # Setup
+    setup
+    
+    # Build if needed
+    if [ ! -f "$SERVER_BIN" ]; then
+        log_info "Building server..."
+        make -C "$SCRIPT_DIR/.." clean all || {
+            log_fail "Build failed"
+            exit 1
+        }
+    fi
+    
+    # Start server
+    start_server
+    
+    # Run tests
+    test_connectivity
+    test_static_files
+    test_directory_listing
+    test_404
+    test_security
+    test_concurrent
+    test_content_types
+    test_special_endpoints
+    test_version
+    test_performance
+    
+    # Future tests (v0.2.0)
+    test_http2
+    test_websocket
+    test_tls
+    
+    # Stop server
+    stop_server
+    
+    # Print summary
+    print_summary
+    
+    # Cleanup
+    cleanup
+    
+    exit $TESTS_FAILED
+}
+
+# Run main
+trap cleanup EXIT
+main

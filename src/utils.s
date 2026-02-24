@@ -2,6 +2,7 @@
 
 .include "src/defs.s"
 
+.global memcpy
 .global strcpy
 .global strcat
 .global strlen
@@ -23,6 +24,20 @@
 .global daemonize
 
 .text
+
+/* memcpy(dest, src, n) - Copy n bytes */
+memcpy:
+    cmp     x2, #0
+    beq     memcpy_done
+    mov     x3, #0
+memcpy_loop:
+    ldrb    w4, [x1, x3]
+    strb    w4, [x0, x3]
+    add     x3, x3, #1
+    cmp     x3, x2
+    blt     memcpy_loop
+memcpy_done:
+    ret
 
 /* strcpy(dest, src) - 4-way unrolled */
 strcpy:
