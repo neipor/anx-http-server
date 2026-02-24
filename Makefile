@@ -9,17 +9,21 @@ LDFLAGS = -static
 
 # Version
 VERSION_MAJOR = 0
-VERSION_MINOR = 1
+VERSION_MINOR = 2
 VERSION_PATCH = 0
-VERSION_STAGE = alpha
+VERSION_STAGE = beta
 
 # Directories
 SRC_DIR = src
 BUILD_DIR = build
 TEST_DIR = tests
 
-# Source files
-SRCS = config.s data.s listing.s http.s main.s network.s utils.s i18n.s cgi.s error.s
+# Source files (note: frames.s is included by connection.s, not compiled separately)
+SRCS = config.s data.s listing.s http.s main.s network.s utils.s i18n.s cgi.s error.s \
+       protocol/http2/connection.s protocol/http2/streams.s protocol/http2/hpack.s \
+       protocol/websocket/frames.s protocol/websocket/handshake.s \
+       core/memory.s core/simd.s \
+       io/engine.s io/uring.s
 
 # Objects
 OBJS = $(patsubst %.s,$(BUILD_DIR)/%.o,$(SRCS))
@@ -53,6 +57,7 @@ $(BUILD_DIR)/main.o: $(SRC_DIR)/version.s
 
 # Compile rule
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.s | $(BUILD_DIR)
+	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 # Create build directory
