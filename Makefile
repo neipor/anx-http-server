@@ -20,7 +20,7 @@ TEST_DIR = tests
 
 # Source files (note: frames.s is included by connection.s, not compiled separately)
 SRCS = config.s data.s listing.s http.s main.s network.s utils.s i18n.s cgi.s error.s \
-       protocol/http2/connection.s protocol/http2/streams.s protocol/http2/hpack.s \
+       protocol/http2/connection.s protocol/http2/streams.s protocol/http2/hpack.s protocol/http2/hpack_impl.s \
        protocol/websocket/frames.s protocol/websocket/handshake.s \
        core/memory.s core/simd.s core/simd_wrapper.s \
        io/engine.s io/uring.s \
