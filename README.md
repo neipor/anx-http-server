@@ -63,3 +63,33 @@ root=./www
 
 ## License
 MIT
+
+## Version History
+
+### v0.2.0-beta (Current)
+**HTTP/2 Core + SIMD Optimizations**
+
+- HTTP/2 connection management (RFC 7540)
+- Stream state machine with 1000 concurrent streams  
+- Flow control (connection + stream level)
+- SIMD memory operations: 30-60 GB/s throughput
+- io_uring framework for async I/O
+- ~8,000 lines of pure AArch64 assembly
+
+[Download v0.2.0-beta](https://github.com/neipor/anx-http-server/releases/tag/v0.2.0-beta)
+
+### v0.1.0-alpha
+**Architecture Refactor**
+
+- Modular architecture (core/, io/, protocol/)
+- Memory pool management
+- I/O engine abstraction  
+- WebSocket frame handling
+- ~6,250 lines of assembly
+
+### v0.0.x (Original)
+Initial HTTP/1.1 server implementation
+
+---
+
+**GitHub**: https://github.com/neipor/anx-http-server
