@@ -3,6 +3,16 @@
 .include "src/defs.s"
 
 .global memcpy
+.global fast_memcpy
+.global fast_memset
+.global fast_strlen
+.global fast_strcmp
+
+/* Import SIMD wrapper functions */
+.extern simd_memcpy_128
+.extern simd_memset_128
+.extern simd_strlen_neon
+.extern simd_strcmp_neon
 .global strcpy
 .global strcat
 .global strlen
@@ -25,19 +35,16 @@
 
 .text
 
-/* memcpy(dest, src, n) - Copy n bytes */
+/* memcpy(dest, src, n) - Copy n bytes (auto-selects SIMD for large buffers) */
 memcpy:
-    cmp     x2, #0
-    beq     memcpy_done
-    mov     x3, #0
-memcpy_loop:
-    ldrb    w4, [x1, x3]
-    strb    w4, [x0, x3]
-    add     x3, x3, #1
-    cmp     x3, x2
-    blt     memcpy_loop
-memcpy_done:
-    ret
+    /* Use fast_memcpy which auto-selects SIMD for buffers >= 128 bytes */
+    b       fast_memcpy
+
+/* memset(dest, val, n) - Set memory (auto-selects SIMD for large buffers) */
+.global memset
+memset:
+    /* Use fast_memset which auto-selects SIMD for buffers >= 128 bytes */
+    b       fast_memset
 
 /* strcpy(dest, src) - 4-way unrolled */
 strcpy:
