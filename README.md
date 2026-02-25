@@ -66,7 +66,17 @@ MIT
 
 ## Version History
 
-### v0.2.0-beta (Current)
+### v0.3.0-dev (Current)
+**WebSocket Handshake + SHA1 + Base64**
+
+- SHA-1 hash algorithm (RFC 3174) - 80 rounds, pure assembly
+- Base64 encoding/decoding (RFC 4648) - scalar + NEON
+- Complete WebSocket handshake (RFC 6455)
+  - Sec-WebSocket-Key extraction
+  - Accept key generation: BASE64(SHA1(key + magic))
+- ~9,000 lines of pure AArch64 assembly
+
+### v0.2.0-beta
 **HTTP/2 Core + SIMD Optimizations**
 
 - HTTP/2 connection management (RFC 7540)
@@ -75,8 +85,6 @@ MIT
 - SIMD memory operations: 30-60 GB/s throughput
 - io_uring framework for async I/O
 - ~8,000 lines of pure AArch64 assembly
-
-[Download v0.2.0-beta](https://github.com/neipor/anx-http-server/releases/tag/v0.2.0-beta)
 
 ### v0.1.0-alpha
 **Architecture Refactor**
