@@ -9,9 +9,9 @@ LDFLAGS = -static
 
 # Version
 VERSION_MAJOR = 0
-VERSION_MINOR = 2
+VERSION_MINOR = 3
 VERSION_PATCH = 0
-VERSION_STAGE = beta
+VERSION_STAGE = dev
 
 # Directories
 SRC_DIR = src
@@ -23,7 +23,8 @@ SRCS = config.s data.s listing.s http.s main.s network.s utils.s i18n.s cgi.s er
        protocol/http2/connection.s protocol/http2/streams.s protocol/http2/hpack.s \
        protocol/websocket/frames.s protocol/websocket/handshake.s \
        core/memory.s core/simd.s \
-       io/engine.s io/uring.s
+       io/engine.s io/uring.s \
+       crypto/sha1.s crypto/base64.s
 
 # Objects
 OBJS = $(patsubst %.s,$(BUILD_DIR)/%.o,$(SRCS))
