@@ -87,47 +87,48 @@ sct_loop:
     bne sct_loop
     ret
 
-/* strlen(str) -> len - 4-way unrolled */
+/* strlen(str) -> len - 4-way unrolled (TODO: add SIMD optimization) */
 strlen:
-    mov x1, x0
+    mov     x1, x0
 sl_loop:
-    ldrb w2, [x1], #1
-    cmp w2, #0
-    beq sl_end_1
-    ldrb w2, [x1], #1
-    cmp w2, #0
-    beq sl_end_1
-    ldrb w2, [x1], #1
-    cmp w2, #0
-    beq sl_end_1
-    ldrb w2, [x1], #1
-    cmp w2, #0
-    bne sl_loop
+    ldrb    w2, [x1], #1
+    cmp     w2, #0
+    beq     sl_end_1
+    ldrb    w2, [x1], #1
+    cmp     w2, #0
+    beq     sl_end_1
+    ldrb    w2, [x1], #1
+    cmp     w2, #0
+    beq     sl_end_1
+    ldrb    w2, [x1], #1
+    cmp     w2, #0
+    bne     sl_loop
 sl_end_1:
-    sub x0, x1, x0
-    sub x0, x0, #1
+    sub     x0, x1, x0
+    sub     x0, x0, #1
     ret
 
-/* strcmp(s1, s2) -> 0 if eq */
+/* strcmp(s1, s2) -> 0 if eq (TODO: add SIMD optimization) */
 strcmp:
-    mov x4, x0
-    mov x5, x1
+    mov     x4, x0
+    mov     x5, x1
 scmp_loop:
-    ldrb w2, [x4], #1
-    ldrb w3, [x5], #1
-    cmp w2, #0
-    beq scmp_check_end
-    cmp w2, w3
-    bne scmp_diff
-    b scmp_loop
+    ldrb    w2, [x4], #1
+    ldrb    w3, [x5], #1
+    cmp     w2, #0
+    beq     scmp_check_end
+    cmp     w2, w3
+    bne     scmp_diff
+    b       scmp_loop
 scmp_check_end:
-    cmp w3, #0
-    beq scmp_eq
+    cmp     w3, #0
+    beq     scmp_eq
 scmp_diff:
-    sub x0, x2, x3
+    sub     w0, w2, w3
+    sxtw    x0, w0
     ret
 scmp_eq:
-    mov x0, #0
+    mov     x0, #0
     ret
 
 /* strstr(haystack, needle) -> ptr or NULL */

@@ -116,35 +116,34 @@ fast_strlen:
     stp     x29, x30, [sp, #-16]!
     mov     x29, sp
     
-    /* 先检查对齐和前16字节 */
-    mov     x4, x0                  /* 保存原始指针 */
+    /* Save original pointer */
+    mov     x4, x0
+    mov     x5, #0                  /* Count of bytes before alignment */
     
-    /* 检查是否已对齐到16字节 */
+    /* Check alignment */
     and     x1, x0, #15
     cbz     x1, 1f
     
-    /* 未对齐：先处理未对齐前缀 */
-    mov     x1, #0
+    /* Handle unaligned prefix byte by byte */
 2:
     ldrb    w2, [x0], #1
     cbz     w2, fast_strlen_done
-    add     x1, x1, #1
-    cmp     x1, #16
-    blt     2b
+    add     x5, x5, #1
+    and     x1, x0, #15             /* Check if now aligned */
+    cbnz    x1, 2b
 
 1:
-    /* 对齐后：使用SIMD */
+    /* Now aligned: use SIMD */
     bl      simd_strlen_neon
-    /* x0现在包含从对齐点开始的长度 */
-    /* 加上之前的偏移 */
-    sub     x1, x0, x4
-    add     x0, x0, x1
-    b       fast_strlen_done_2
+    /* x0 contains length from aligned position */
+    /* Add the unaligned prefix count */
+    add     x0, x0, x5
+    b       fast_strlen_return
 
 fast_strlen_done:
-    sub     x0, x0, x4
+    sub     x0, x0, x4              /* Return total length */
 
-fast_strlen_done_2:
+fast_strlen_return:
     ldp     x29, x30, [sp], #16
     ret
 
