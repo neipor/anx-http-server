@@ -200,7 +200,8 @@ ws_frame_build:
     
     cmp     x4, #126
     blt     ws_build_len_7
-    cmp     x4, #65535
+    mov     x6, #65535
+    cmp     x4, x6
     ble     ws_build_len_16
     
     /* 64-bit length */
@@ -307,7 +308,8 @@ mask_loop:
 mask_byte:
     /* XOR single byte */
     and     x5, x3, #3              /* offset % 4 */
-    lsr     w4, w2, x5, lsl #3      /* Shift mask to correct byte */
+    lsl     x6, x5, #3              /* shift amount = offset * 8 */
+    lsr     w4, w2, w6              /* Shift mask to correct byte */
     and     w4, w4, #0xFF
     
     ldrb    w5, [x19, x3]
