@@ -8,8 +8,7 @@
 .global h2_send_data_frame
 .global h2_build_headers_block
 
-/* ========================================================================
- * Send HTTP/2 Response
+/* ======================================================================== * Send HTTP/2 Response
  * ======================================================================== */
 
 /*
@@ -95,9 +94,7 @@ h2_resp_done:
     ldp     x29, x30, [sp], #96
     ret
 
-/* ========================================================================
- * Build Headers Block (HPACK encoded)
- * ======================================================================== */
+/* ======================================================================== * Build Headers Block (HPACK encoded) * ======================================================================== */
 
 /*
  * h2_build_headers_block(conn, status, headers, output)
@@ -108,42 +105,17 @@ h2_resp_done:
  * Returns: x0 = encoded length
  */
 h2_build_headers_block:
-    stp     x29, x30, [sp, #-64]!
+    stp     x29, x30, [sp, #-16]!
     mov     x29, sp
-    stp     x19, x20, [sp, #16]
-    stp     x21, x22, [sp, #32]
-    stp     x23, x24, [sp, #48]
     
-    mov     x19, x0                 /* connection */
-    mov     x20, x1                 /* status */
-    mov     x21, x2                 /* headers */
-    mov     x22, x3                 /* output */
-    mov     x23, x3                 /* current output position */
+    /* Call the full implementation with 8KB buffer size */
+    mov     x4, #8192
+    bl      h2_build_headers_block_impl
     
-    /* Encode :status pseudo-header */
-    /* Convert status to string */
-    mov     x0, x20
-    add     x1, sp, #40             /* temp buffer */
-    bl      itoa
-    mov     x24, x0                 /* status string length */
-    
-    /* TODO: Use indexed status if common (200, 204, 404, etc.) */
-    /* For now, encode as literal with indexing */
-    
-    add     sp, sp, #64             /* cleanup */
-    
-    /* Return encoded length */
-    sub     x0, x23, x22
-    
-    ldp     x19, x20, [sp, #16]
-    ldp     x21, x22, [sp, #32]
-    ldp     x23, x24, [sp, #48]
-    ldp     x29, x30, [sp], #64
+    ldp     x29, x30, [sp], #16
     ret
 
-/* ========================================================================
- * Send HEADERS Frame
- * ======================================================================== */
+/* ======================================================================== * Send HEADERS Frame * ======================================================================== */
 
 /*
  * h2_send_headers_frame(conn, stream_id, headers, len, flags)
@@ -219,8 +191,7 @@ h2_headers_send_done:
     ldp     x29, x30, [sp], #48
     ret
 
-/* ========================================================================
- * Send DATA Frame
+/* ======================================================================== * Send DATA Frame
  * ======================================================================== */
 
 /*
@@ -297,6 +268,8 @@ h2_data_send_done:
     ret
 
 /* External functions */
+.global h2_build_headers_block_impl
+.global hpack_encode_integer
 .global itoa
 .global memcpy
-
+.global SYS_WRITE
