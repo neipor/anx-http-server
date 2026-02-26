@@ -9,7 +9,7 @@ LDFLAGS = -static
 
 # Version
 VERSION_MAJOR = 0
-VERSION_MINOR = 3
+VERSION_MINOR = 4
 VERSION_PATCH = 0
 VERSION_STAGE = dev
 
@@ -20,10 +20,10 @@ TEST_DIR = tests
 
 # Source files (note: frames.s is included by connection.s, not compiled separately)
 SRCS = config.s data.s listing.s http.s main.s network.s utils.s i18n.s cgi.s error.s \
-       protocol/http2/connection.s protocol/http2/streams.s protocol/http2/hpack.s \
+       protocol/http2/connection.s protocol/http2/streams.s protocol/http2/hpack.s protocol/http2/hpack_impl.s protocol/http2/hpack_dynamic.s protocol/http2/hpack_encode.s protocol/http2/handler.s protocol/http2/response.s \
        protocol/websocket/frames.s protocol/websocket/handshake.s \
-       core/memory.s core/simd.s \
-       io/engine.s io/uring.s \
+       core/memory.s core/simd.s core/simd_wrapper.s \
+       io/engine.s io/uring.s io/uring_impl.s \
        crypto/sha1.s crypto/base64.s
 
 # Objects
