@@ -269,10 +269,13 @@ h2_build_http1_request:
     stp     x29, x30, [sp, #-16]!
     mov     x29, sp
     
-    /* TODO: Build request buffer in format expected by existing code */
-    /* Format: "METHOD PATH HTTP/1.1\r\nHost: authority\r\n...headers...\r\n" */
+    /* Allocate temporary buffer on stack */
+    sub     sp, sp, #8192
+    mov     x1, sp                /* buffer */
+    mov     x2, #8192             /* buffer size */
+    bl      h2_build_http1_request_impl
+    add     sp, sp, #8192
     
-    mov     x0, #0
     ldp     x29, x30, [sp], #16
     ret
 
@@ -287,22 +290,9 @@ h2_build_http1_request:
  * x2 = request context
  */
 h2_process_request:
-    stp     x29, x30, [sp, #-16]!
-    mov     x29, sp
-    
-    /* TODO: Route to appropriate handler */
-    /* 1. Check path and route */
-    /* 2. Read file or process request */
-    /* 3. Build HTTP/2 response */
-    /* 4. Send HEADERS frame */
-    /* 5. Send DATA frames */
-    
-    mov     x0, #0
-    ldp     x29, x30, [sp], #16
-    ret
+    b       h2_process_request_impl
 
-/* ========================================================================
- * HPACK Decode Headers (simplified)
+/* ======================================================================== * HPACK Decode Headers
  * ======================================================================== */
 
 /*
@@ -313,15 +303,7 @@ h2_process_request:
  * x3 = request context to fill
  */
 hpack_decode_headers:
-    stp     x29, x30, [sp, #-16]!
-    mov     x29, sp
-    
-    /* TODO: Implement full HPACK decoding */
-    /* For now, stub */
-    
-    mov     x0, #0
-    ldp     x29, x30, [sp], #16
-    ret
+    b       hpack_decode_headers_impl
 
 /* ========================================================================
  * Build HTTP/2 Response Headers
