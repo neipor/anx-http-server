@@ -23,7 +23,7 @@ SRCS = config.s data.s listing.s http.s main.s network.s utils.s i18n.s cgi.s er
        protocol/http2/connection.s protocol/http2/streams.s protocol/http2/hpack.s protocol/http2/hpack_impl.s protocol/http2/hpack_dynamic.s protocol/http2/hpack_encode.s protocol/http2/handler.s \
        protocol/websocket/frames.s protocol/websocket/handshake.s \
        core/memory.s core/simd.s core/simd_wrapper.s \
-       io/engine.s io/uring.s \
+       io/engine.s io/uring.s io/uring_impl.s \
        crypto/sha1.s crypto/base64.s
 
 # Objects
