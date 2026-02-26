@@ -48,6 +48,7 @@ uring_cq_ktail:     .quad 0         /* Kernel CQ tail mapping */
 
 .data
 .align 4
+.global uring_ring_state
 uring_ring_state:   .skip 160       /* Global ring state */
 
 .text
