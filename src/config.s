@@ -133,17 +133,17 @@ try_worker_processes:
     
     add x0, x0, #17       /* Skip "worker_processes=" */
     bl atoi
-    /* Clamp to 1-128 */
-    cmp x0, #1
+    /* Clamp to MIN_WORKERS-MAX_WORKERS */
+    cmp x0, MIN_WORKERS
     blt wc_min
-    cmp x0, #128
+    cmp x0, MAX_WORKERS
     bgt wc_max
     b wc_store
 wc_min:
-    mov x0, #1
+    mov x0, MIN_WORKERS
     b wc_store
 wc_max:
-    mov x0, #128
+    mov x0, MAX_WORKERS
 wc_store:
     ldr x1, =worker_count
     str w0, [x1]

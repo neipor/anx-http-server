@@ -98,17 +98,9 @@ bind_fail:
 accept_loop:
     mov x19, x0             /* x19 = listen_fd */
     
-    /* Load worker count from config, default to 4 */
+    /* Load worker count (already initialized in main.s) */
     ldr x0, =worker_count
     ldr w20, [x0]
-    cmp w20, #0
-    bne worker_count_ok
-    ldr x0, =default_worker_count
-    ldr w20, [x0]
-    /* Store default worker count */
-    ldr x1, =worker_count
-    str w20, [x1]
-worker_count_ok:
     mov w26, w20            /* w26 = total worker count for respawn */
 
 spawn_workers:

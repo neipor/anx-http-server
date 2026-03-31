@@ -97,3 +97,7 @@
 
 /* Clone Flags */
 .equ SIGCHLD_FLAG, 17     /* Exit signal for clone */
+
+/* Worker Limits */
+.equ MIN_WORKERS, 1
+.equ MAX_WORKERS, 128

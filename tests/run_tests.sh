@@ -374,10 +374,13 @@ test_head_method() {
         log_fail "HEAD response missing Content-Length"
     fi
     
-    # Verify no body is returned
-    BODY=$(curl -s -I http://localhost:$PORT/index.html | tail -1)
-    # HEAD response should be headers only
-    log_pass "HEAD method returns headers only"
+    # Verify no body is returned (HEAD should have empty body)
+    BODY_SIZE=$(curl -s -o /dev/null -w "%{size_download}" -I http://localhost:$PORT/index.html)
+    if [ "$BODY_SIZE" == "0" ]; then
+        log_pass "HEAD method returns no body (0 bytes)"
+    else
+        log_fail "HEAD method returned $BODY_SIZE bytes (expected 0)"
+    fi
 }
 
 # Test: Range requests
