@@ -267,6 +267,14 @@
     str_unknown:    .asciz "REQ"
     str_conn_close: .asciz "Connection: close"
 
+    /* Health check endpoint path and response */
+    path_health:    .asciz "/health"
+    http_health_resp:
+        .ascii "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n"
+        .ascii "{\"status\":\"ok\"}"
+    len_health_resp = . - http_health_resp
+    .global path_health, http_health_resp, len_health_resp
+
 
     /* Extended MIME Types */
     mime_html:      .asciz "text/html"
@@ -436,6 +444,7 @@
     current_status: .skip 4
     access_log_path: .skip 256
     env_buffer:     .skip 4096
+    req_method:     .skip 16
     
     .global current_status
     .global access_log_path
@@ -443,6 +452,7 @@
     .global env_buffer
     .global log_fd
     .global key_access_log
+    .global req_method
 
 .data
     log_fd:         .word 1     /* Default to stdout (1) */

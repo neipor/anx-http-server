@@ -641,10 +641,12 @@ log_request:
     stp x19, x20, [sp, #16]
     stp x21, x22, [sp, #32]
     str x23, [sp, #48]
-    
-    mov x19, x0
-    mov x20, x1
-    mov x21, x2
+
+    /* Use global variables instead of parameters (all callers pass wrong args) */
+    ldr x19, =req_method        /* method from global (set by parse_request) */
+    ldr x20, =req_path          /* path from global */
+    ldr x21, =current_status
+    ldr w21, [x21]              /* status code from global */
     ldr x22, =log_buffer
     
     /* 1. Time */

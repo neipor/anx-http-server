@@ -167,7 +167,7 @@ epoll_init:
     ldr w0, =EPOLLEXCLUSIVE
     orr w0, w0, #EPOLLIN
     str w0, [sp]
-    str x19, [sp, #8]
+    str x19, [sp, #8]       /* data.u64 at offset 8 (AArch64: struct epoll_event is NOT packed, data aligns at 8) */
     
     mov x0, x21
     mov x1, EPOLL_CTL_ADD
@@ -191,17 +191,23 @@ epoll_loop:
     
     cmp x0, #0
     beq epoll_loop          /* No events, retry */
-    cmp x0, #-EINTR
-    beq epoll_loop          /* EINTR, retry */
+    blt epoll_check_err     /* Negative = error */
     
     mov x22, x0             /* num_events */
     ldr x23, =epoll_events
+    b process_events
+
+epoll_check_err:
+    /* Retry on EINTR, exit on other errors */
+    cmn x0, #EINTR          /* cmp x0, #-EINTR */
+    beq epoll_loop          /* EINTR: retry */
+    b worker_exit           /* Other error: exit worker */
     
 process_events:
     cmp x22, #0
     beq epoll_loop
     
-    /* Load event data.fd (offset 8) */
+    /* Load event data.fd (offset 8: AArch64 epoll_event has natural alignment, data at offset 8) */
     ldr x24, [x23, #8]
     
     /* Check if it is listen_fd */
@@ -209,7 +215,7 @@ process_events:
     beq do_accept
     
     /* Otherwise it is client_fd -> Handle Request */
-    mov x0, x24
+    mov x0, x24             /* client_fd */
     bl handle_client
     b event_done
 
@@ -267,7 +273,7 @@ do_accept:
     sub sp, sp, #16
     mov w0, EPOLLIN
     str w0, [sp]
-    str x25, [sp, #8]       /* data.fd = client_fd */
+    str x25, [sp, #8]       /* data.fd at offset 8 (AArch64 natural alignment) */
 
     mov x0, x21             /* epfd */
     mov x1, EPOLL_CTL_ADD
@@ -284,7 +290,7 @@ accept_fail:
     /* Fallthrough to event_done */
 
 event_done:
-    add x23, x23, #16       /* Next event */
+    add x23, x23, #16       /* Next event (AArch64 epoll_event = 16 bytes: 4 events + 4 padding + 8 data) */
     sub x22, x22, #1
     b process_events
 

@@ -117,14 +117,11 @@ ws_parse_len_64:
     cmp     x20, #10
     blt     ws_parse_fail_short
     
-    /* Read 8 bytes (big-endian) */
+    /* Read 8 bytes at offset 2 (big-endian network byte order) */
     ldr     x3, [x19, #2]
-    ldr     x4, [x19, #10]
-    rev     x3, x3                  /* Swap endianness */
-    rev     x4, x4
-    /* Combine: high 32 bits from x3, low 32 from x4 (simplified) */
-    str     x4, [x2, #4]            /* Store low 64 bits */
-    mov     x5, #10                 /* header_len = 10 */
+    rev     x3, x3                  /* Convert from big-endian to host byte order */
+    str     x3, [x2, #4]            /* Store correct 64-bit payload length */
+    mov     x5, #10                 /* header_len = 2 + 8 = 10 */
 
 ws_parse_mask_key:
     /* Check if masked */
