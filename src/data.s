@@ -28,12 +28,17 @@
 .global http_server_hdr, len_server_hdr
 .global http_content_type, len_content_type
 .global str_conn_close
+.global http_date_buffer
+.global http_date_hdr_prefix, len_date_hdr_prefix
+.global day_names, month_names
+.global msg_epoll_create_fail, len_epoll_create_fail
+.global msg_epoll_ctl_fail, len_epoll_ctl_fail
 
 
 /* Keys & Flags */
 .global key_port, key_root, key_upstream_ip, key_upstream_port
-.global flag_p, flag_d, flag_c, flag_x, flag_h, flag_v, flag_silent
-.global flag_port_long, flag_dir_long, flag_conf_long, flag_proxy_long, flag_help_long, flag_vers_long, flag_silent_long
+.global flag_p, flag_d, flag_c, flag_n, flag_x, flag_h, flag_v, flag_silent
+.global flag_port_long, flag_dir_long, flag_conf_long, flag_nginx_long, flag_proxy_long, flag_help_long, flag_vers_long, flag_silent_long
 .global is_silent
 
 /* HTTP Headers */
@@ -55,8 +60,12 @@
 .global mime_json, mime_svg, mime_ico, mime_xml, mime_txt, mime_pdf
 .global len_mime_json, len_mime_svg, len_mime_ico, len_mime_xml, len_mime_txt, len_mime_pdf
 .global mime_bin, len_mime_bin
-.global ext_html, ext_css, ext_js, ext_png, ext_jpg
+.global ext_html, ext_htm, ext_css, ext_js, ext_mjs, ext_png, ext_jpg, ext_jpeg
 .global ext_json, ext_svg, ext_ico, ext_xml, ext_txt, ext_pdf, ext_py
+.global ext_sh, ext_cgi, ext_gif, ext_webp, ext_woff, ext_woff2, ext_ttf, ext_eot
+.global ext_mp4, ext_webm, ext_mp3, ext_wav, ext_zip, ext_gz, ext_tar, ext_wasm, ext_map
+.global mime_gif, mime_webp, mime_woff, mime_woff2, mime_ttf, mime_eot
+.global mime_mp4, mime_webm, mime_mp3, mime_wav, mime_zip, mime_gzip, mime_tar, mime_wasm
 .global index_file
 
 /* HTML Templates */
@@ -86,7 +95,8 @@
 .global epoll_events
 .global iovec_buffer
 .global act
-.global sendfile_offset
+    .global sendfile_offset
+    .global epoll_fd
 
 .data
     /* Defaults */
@@ -127,6 +137,8 @@
     flag_port_long: .asciz "--port"
     flag_dir_long:  .asciz "--dir"
     flag_conf_long: .asciz "--config"
+    flag_nginx_long:.asciz "--nginx-config"
+    flag_n:         .asciz "-n"
     flag_proxy_long:.asciz "--proxy"
     flag_help_long: .asciz "--help"
     flag_vers_long: .asciz "--version"
@@ -140,8 +152,12 @@
     msg_root:       .ascii "\x1b[0m\n \x1b[1;32m[CONFIG]\x1b[0m Root: \x1b[1;35m"
     len_msg_root = . - msg_root
     
-    msg_workers:    .ascii "\x1b[0m\n \x1b[1;32m[WORKER]\x1b[0m Spawning \x1b[1m64\x1b[0m worker processes...\n"
-    len_msg_workers = . - msg_workers
+    msg_workers_prefix: .ascii "\x1b[0m\n \x1b[1;32m[WORKER]\x1b[0m Spawning \x1b[1m"
+    len_workers_prefix = . - msg_workers_prefix
+    msg_workers_suffix: .ascii "\x1b[0m worker processes...\n"
+    len_workers_suffix = . - msg_workers_suffix
+    .global msg_workers_prefix, len_workers_prefix
+    .global msg_workers_suffix, len_workers_suffix
     
     msg_daemon:     .ascii " \x1b[1;36m[SYSTEM]\x1b[0m Running in background (Daemon)...\n"
     len_msg_daemon = . - msg_daemon
@@ -156,7 +172,7 @@
     col_yellow:     .asciz "\x1b[33m"
     col_reset:      .asciz "\x1b[0m"
     txt_arrow:      .asciz " -> "
-    is_silent:      .word 0
+    is_silent:      .word 0     /* Logging enabled by default */
     is_daemon:      .word 0
 
     msg_conf_read:  .asciz "\x1b[1;33m[DEBUG]\x1b[0m Config read\n"
@@ -173,14 +189,48 @@
     key_upstream_ip: .asciz "upstream_ip="
     key_upstream_port: .asciz "upstream_port="
     
-    pid_file_path: .asciz "server.pid"
+    cpu_online_path: .asciz "/sys/devices/system/cpu/online"
     
+    pid_file_default: .asciz "server.pid"
+
     .global flag_daemon, flag_daemon_long, is_daemon, msg_daemon, len_msg_daemon
-    .global pid_file_path
+    .global pid_file_path, pid_file_default
 
     /* HTTP Headers & Error Pages */
-    http_server_hdr: .ascii "Server: ANX/4.1\r\n"
+    http_server_hdr: .ascii "Server: ANX/5.0\r\n"
     len_server_hdr = . - http_server_hdr
+    
+    http_date_hdr_prefix: .ascii "Date: "
+    len_date_hdr_prefix = . - http_date_hdr_prefix
+    
+    /* Day and month name lookup tables (3 chars each) */
+    day_names:
+        .ascii "Sun" /* 0 */
+        .ascii "Mon" /* 1 */
+        .ascii "Tue" /* 2 */
+        .ascii "Wed" /* 3 */
+        .ascii "Thu" /* 4 */
+        .ascii "Fri" /* 5 */
+        .ascii "Sat" /* 6 */
+    month_names:
+        .ascii "Jan" /* 0 = January */
+        .ascii "Feb"
+        .ascii "Mar"
+        .ascii "Apr"
+        .ascii "May"
+        .ascii "Jun"
+        .ascii "Jul"
+        .ascii "Aug"
+        .ascii "Sep"
+        .ascii "Oct"
+        .ascii "Nov"
+        .ascii "Dec"
+    
+    /* Error messages (replacing debug messages) */
+    msg_epoll_create_fail: .ascii "[ERROR] epoll_create1 failed\n"
+    len_epoll_create_fail = . - msg_epoll_create_fail
+    msg_epoll_ctl_fail: .ascii "[ERROR] epoll_ctl failed\n"
+    len_epoll_ctl_fail = . - msg_epoll_ctl_fail
     
     http_status_200: .ascii "HTTP/1.1 200 OK\r\n"
     len_status_200 = . - http_status_200
@@ -229,9 +279,6 @@
     str_http_end:   .asciz "\r\n\r\n"
     .global str_http_end
 
-    str_debug_log:  .asciz "LOGREQ\n"
-    .global str_debug_log
-
     /* 400 Bad Request */
     http_400:
         .ascii "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 363\r\n\r\n"
@@ -259,6 +306,34 @@
         .ascii "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: 363\r\n\r\n"
         .ascii "<!DOCTYPE html><html><head><title>502 Bad Gateway</title><style>body{font-family:system-ui,sans-serif;color:#333;text-align:center;padding:50px}h1{font-size:3em;margin:0}hr{max-width:300px;margin:20px auto;border:0;border-top:1px solid #eee}span{font-size:0.8em;color:#999}</style></head><body><h1>502</h1><p>Bad Gateway</p><hr><span>ANX Server</span></body></html>"
     len_502 = . - http_502
+
+    /* OPTIONS Response */
+    http_options_resp:
+        .ascii "HTTP/1.1 200 OK\r\n"
+        .ascii "Allow: GET, HEAD, POST, PUT, DELETE, OPTIONS, PATCH\r\n"
+        .ascii "Access-Control-Allow-Origin: *\r\n"
+        .ascii "Access-Control-Allow-Methods: GET, HEAD, POST, PUT, DELETE, OPTIONS, PATCH\r\n"
+        .ascii "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With\r\n"
+        .ascii "Access-Control-Max-Age: 86400\r\n"
+        .ascii "Server: ANX/5.0\r\n"
+        .ascii "Content-Length: 0\r\n"
+        .ascii "\r\n"
+    len_options_resp = . - http_options_resp
+    .global http_options_resp, len_options_resp
+
+    /* 405 Method Not Allowed */
+    http_405:
+        .ascii "HTTP/1.1 405 Method Not Allowed\r\n"
+        .ascii "Allow: GET, HEAD, POST, PUT, DELETE, OPTIONS, PATCH\r\n"
+        .ascii "Content-Type: text/html\r\nConnection: close\r\nContent-Length: 381\r\n\r\n"
+        .ascii "<!DOCTYPE html><html><head><title>405 Method Not Allowed</title><style>body{font-family:system-ui,sans-serif;color:#333;text-align:center;padding:50px}h1{font-size:3em;margin:0}hr{max-width:300px;margin:20px auto;border:0;border-top:1px solid #eee}span{font-size:0.8em;color:#999}</style></head><body><h1>405</h1><p>Method Not Allowed</p><hr><span>ANX Server</span></body></html>"
+    len_405 = . - http_405
+    .global http_405, len_405
+
+    /* Accept-Ranges header */
+    http_accept_ranges: .ascii "Accept-Ranges: bytes\r\n"
+    len_accept_ranges = . - http_accept_ranges
+    .global http_accept_ranges, len_accept_ranges
 
     dotdot:         .asciz ".."
     str_get:        .asciz "GET"
@@ -323,11 +398,42 @@
     .global len_mime_bin_val
     len_mime_bin_val: .word len_mime_bin
 
+    /* Additional MIME types */
+    mime_gif:       .asciz "image/gif"
+    mime_webp:      .asciz "image/webp"
+    mime_woff:      .asciz "font/woff"
+    .global len_mime_woff_val
+    len_mime_woff_val: .word 9
+    mime_woff2:     .asciz "font/woff2"
+    .global len_mime_woff2_val
+    len_mime_woff2_val: .word 10
+    mime_ttf:       .asciz "font/ttf"
+    .global len_mime_ttf_val
+    len_mime_ttf_val: .word 8
+    mime_eot:       .asciz "application/vnd.ms-fontobject"
+    .global len_mime_eot_val
+    len_mime_eot_val: .word 29
+    mime_mp4:       .asciz "video/mp4"
+    mime_webm:      .asciz "video/webm"
+    mime_mp3:       .asciz "audio/mpeg"
+    mime_wav:       .asciz "audio/wav"
+    mime_zip:       .asciz "application/zip"
+    mime_gzip:      .asciz "application/gzip"
+    mime_tar:       .asciz "application/x-tar"
+    .global len_mime_tar_val
+    len_mime_tar_val: .word 17
+    mime_wasm:      .asciz "application/wasm"
+    .global len_mime_wasm_val
+    len_mime_wasm_val: .word 16
+
     ext_html:       .asciz ".html"
+    ext_htm:        .asciz ".htm"
     ext_css:        .asciz ".css"
     ext_js:         .asciz ".js"
+    ext_mjs:        .asciz ".mjs"
     ext_png:        .asciz ".png"
     ext_jpg:        .asciz ".jpg"
+    ext_jpeg:       .asciz ".jpeg"
     
     ext_json:       .asciz ".json"
     ext_svg:        .asciz ".svg"
@@ -336,6 +442,23 @@
     ext_txt:        .asciz ".txt"
     ext_pdf:        .asciz ".pdf"
     ext_py:         .asciz ".py"
+    ext_sh:         .asciz ".sh"
+    ext_cgi:        .asciz ".cgi"
+    ext_gif:        .asciz ".gif"
+    ext_webp:       .asciz ".webp"
+    ext_woff:       .asciz ".woff"
+    ext_woff2:      .asciz ".woff2"
+    ext_ttf:        .asciz ".ttf"
+    ext_eot:        .asciz ".eot"
+    ext_mp4:        .asciz ".mp4"
+    ext_webm:       .asciz ".webm"
+    ext_mp3:        .asciz ".mp3"
+    ext_wav:        .asciz ".wav"
+    ext_zip:        .asciz ".zip"
+    ext_gz:         .asciz ".gz"
+    ext_tar:        .asciz ".tar"
+    ext_wasm:       .asciz ".wasm"
+    ext_map:        .asciz ".map"
 
     index_file:     .asciz "/index.html"
 
@@ -432,17 +555,34 @@
     act:            .skip 152
     content_len_str: .skip 32
     etag_buffer:    .skip 64
+    http_date_buffer: .skip 64
     sendfile_offset: .skip 8
+    epoll_fd: .word 0
     current_status: .skip 4
+    current_method: .skip 4
     access_log_path: .skip 256
     env_buffer:     .skip 4096
+    worker_count:   .skip 4
+    worker_pids:    .skip 256     /* Up to 64 worker PIDs (4 bytes each) */
+    pid_file_path:  .skip 256
     
     .global current_status
+    .global current_method
     .global access_log_path
+    .global worker_count
+    .global worker_pids
+    .global cpu_online_path
     .global query_string
     .global env_buffer
     .global log_fd
     .global key_access_log
+    .global worker_stack_end
 
 .data
     log_fd:         .word 1     /* Default to stdout (1) */
+
+/* Worker stack - each worker gets 64KB stack */
+.bss
+    .align 16
+    worker_stack:   .skip 65536
+    worker_stack_end:

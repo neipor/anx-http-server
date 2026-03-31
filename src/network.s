@@ -22,10 +22,19 @@ server_init:
     svc #0
     mov x19, x0             /* x19 = listen_fd */
     
-    /* 2. Setsockopt */
+    /* 2. Setsockopt SO_REUSEADDR */
     mov x0, x19
     mov x1, SOL_SOCKET
     mov x2, SO_REUSEADDR
+    ldr x3, =optval
+    mov x4, #4
+    mov x8, SYS_SETSOCKOPT
+    svc #0
+
+    /* 2.5 Setsockopt SO_REUSEPORT (for multi-worker) */
+    mov x0, x19
+    mov x1, SOL_SOCKET
+    mov x2, #15              /* SO_REUSEPORT = 15 */
     ldr x3, =optval
     mov x4, #4
     mov x8, SYS_SETSOCKOPT
@@ -88,47 +97,20 @@ bind_fail:
 /* accept_loop(listen_fd) */
 accept_loop:
     mov x19, x0             /* x19 = listen_fd */
-    mov x20, #1             /* x20 = worker count (1 worker for stability) */
-
-spawn_workers:
-    cmp x20, #0
-    beq monitor_children
-
-    /* Fork Worker */
-    mov x0, SIGCHLD_FLAG
-    mov x1, #0
-    mov x2, #0
-    mov x3, #0
-    mov x4, #0
-    mov x8, SYS_CLONE
-    svc #0
-    
-    cmp x0, #0
-    beq worker_routine
-    
-    /* Parent continues spawning */
-    sub x20, x20, #1
-    b spawn_workers
-
-monitor_children:
-    /* Parent Process: Monitor and Respawn Workers */
-    
-    /* wait4(-1, NULL, 0, NULL) -> pid */
-    mov x0, #-1
-    mov x1, #0
-    mov x2, #0
-    mov x3, #0
-    mov x8, SYS_WAIT4
-    svc #0
-    
-    cmp x0, #0
-    blt monitor_children
-    
-    /* A child died. Respawn it! */
-    mov x20, #1
-    b spawn_workers
+    /* Run in single-process mode for stability */
+    b worker_routine
 
 worker_routine:
+    /* Worker process starts here after fork() */
+    /* Each worker has its own copy of all memory (COW) */
+    
+    /* IMPORTANT: Set up stack frame first! */
+    /* The worker enters via branch, not call, so no stack frame exists */
+    ldr x28, =worker_stack_end   /* Use dedicated worker stack */
+    sub sp, x28, #32             /* Leave padding for alignment */
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    
     /* Check access_log_path */
     ldr x0, =access_log_path
     ldrb w1, [x0]
@@ -158,63 +140,56 @@ epoll_init:
     mov x0, #0
     mov x8, SYS_EPOLL_CREATE1
     svc #0
+    
     cmp x0, #0
-    blt worker_exit
-    mov x21, x0             /* x21 = epoll_fd */
+    blt epoll_create_fail
+    b epoll_create_ok
     
-    /* 2. Add Listen Socket to Epoll with EPOLLEXCLUSIVE */
+epoll_create_fail:
+    /* DEBUG: epoll_create1 failed */
+    mov x0, STDOUT
+    ldr x1, =msg_epoll_create_fail
+    ldr x2, =len_epoll_create_fail
+    mov x8, SYS_WRITE
+    svc #0
+    b worker_exit
+    
+epoll_create_ok:
+    mov x21, x0             /* x21 = epoll_fd - preserved throughout */
+    ldr x1, =epoll_fd
+    str w0, [x1]
+    
+    /* 2. Add Listen Socket to Epoll */
     sub sp, sp, #16
-    ldr w0, =EPOLLEXCLUSIVE
-    orr w0, w0, #EPOLLIN
+    mov w0, EPOLLIN
     str w0, [sp]
-    str x19, [sp, #8]
+    str x19, [sp, #8]       /* data.fd = listen_fd */
     
-    mov x0, x21
+    mov x0, x21             /* epfd */
     mov x1, EPOLL_CTL_ADD
-    mov x2, x19
-    mov x3, sp
+    mov x2, x19             /* fd */
+    mov x3, sp              /* event ptr */
     mov x8, SYS_EPOLL_CTL
     svc #0
     
+    cmp x0, #0
+    blt epoll_ctl_fail
+    b epoll_ctl_ok
+    
+epoll_ctl_fail:
+    add sp, sp, #16
+    mov x0, STDOUT
+    ldr x1, =msg_epoll_ctl_fail
+    ldr x2, =len_epoll_ctl_fail
+    mov x8, SYS_WRITE
+    svc #0
+    b worker_exit
+    
+epoll_ctl_ok:
     add sp, sp, #16
     
 epoll_loop:
-    /* 3. Epoll Wait */
-    mov x0, x21
-    ldr x1, =epoll_events
-    mov x2, #32
-    mov x3, #-1             /* timeout = infinite */
-    mov x4, #0
-    mov x5, #0
-    mov x8, SYS_EPOLL_WAIT
-    svc #0
-    
-    cmp x0, #0
-    beq epoll_loop          /* No events, retry */
-    cmp x0, #-EINTR
-    beq epoll_loop          /* EINTR, retry */
-    
-    mov x22, x0             /* num_events */
-    ldr x23, =epoll_events
-    
-process_events:
-    cmp x22, #0
-    beq epoll_loop
-    
-    /* Load event data.fd (offset 8) */
-    ldr x24, [x23, #8]
-    
-    /* Check if it is listen_fd */
-    cmp x24, x19
-    beq do_accept
-    
-    /* Otherwise it is client_fd -> Handle Request */
-    mov x0, x24
-    bl handle_client
-    b event_done
-
-do_accept:
-    /* Accept Loop using accept4 */
+    /* Use blocking accept instead of epoll for stability */
     sub sp, sp, #32
     mov w2, #16
     str w2, [sp]            /* addrlen */
@@ -222,71 +197,34 @@ do_accept:
     mov x0, x19             /* listen_fd */
     add x1, sp, #16         /* sockaddr */
     mov x2, sp              /* addrlen ptr */
-    
-    /* Enable CloExec on new socket (Blocking I/O + Timeouts) */
-    ldr x3, =SOCK_CLOEXEC
-    /* ldr x4, =SOCK_NONBLOCK */
-    /* orr x3, x3, x4 */     /* Removed Non-Blocking */
+    mov x3, #0              /* flags - blocking */
     
     mov x8, SYS_ACCEPT4
     svc #0
     
     cmp x0, #0
-    blt accept_fail
-
-    mov x25, x0             /* client_fd */
-
-    /* Set SO_RCVTIMEO (30s) */
-    mov x0, x25
-    mov x1, SOL_SOCKET
-    mov x2, SO_RCVTIMEO
-    ldr x3, =timeout_tv
-    mov x4, #16             /* sizeof(struct timeval) */
-    mov x8, SYS_SETSOCKOPT
-    svc #0
+    blt accept_retry        /* Error - retry */
     
-    /* Set SO_SNDTIMEO (30s) */
-    mov x0, x25
-    mov x1, SOL_SOCKET
-    mov x2, SO_SNDTIMEO
-    ldr x3, =timeout_tv
-    mov x4, #16
-    mov x8, SYS_SETSOCKOPT
-    svc #0
-
-    /* Capture IP */
-    /*
-    ldr w0, [sp, #20]
-    ldr x1, =client_ip_str
-    bl ip_to_str
-    */
-
+    mov x25, x0             /* client_fd */
     add sp, sp, #32         /* Restore stack */
-
-    /* Add Client to Epoll */
-    sub sp, sp, #16
-    mov w0, EPOLLIN
-    str w0, [sp]
-    str x25, [sp, #8]       /* data.fd = client_fd */
-
-    mov x0, x21             /* epfd */
-    mov x1, EPOLL_CTL_ADD
-    mov x2, x25             /* fd */
-    mov x3, sp              /* event ptr */
-    mov x8, SYS_EPOLL_CTL
-    svc #0
-
-    add sp, sp, #16
-    b event_done
-
-accept_fail:
+    
+    /* Handle the client */
+    mov x0, x25
+    bl handle_client
+    b epoll_loop
+    
+accept_retry:
     add sp, sp, #32
-    /* Fallthrough to event_done */
-
-event_done:
-    add x23, x23, #16       /* Next event */
-    sub x22, x22, #1
-    b process_events
+    mov x26, #EINTR
+    neg x26, x26
+    cmp x0, x26
+    beq epoll_loop
+    mov x26, #EAGAIN
+    neg x26, x26
+    cmp x0, x26
+    beq epoll_loop
+    /* Other error - continue looping anyway */
+    b epoll_loop
 
 worker_exit:
     mov x0, #1

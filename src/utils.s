@@ -32,6 +32,7 @@
 .global inet_aton
 .global itoa_hex
 .global daemonize
+.global get_http_date
 
 .text
 
@@ -416,10 +417,14 @@ inet_aton:
 ia_loop:
     cmp x21, #4
     beq ia_done
+    str x19, [sp, #-16]!
     mov x0, x19
     bl atoi
+    ldr x19, [sp], #16
     and w0, w0, #0xFF
-    lsl w2, w21, #3
+    mov w2, #3
+    sub w2, w2, w21
+    lsl w2, w2, #3
     lsl w0, w0, w2
     orr w20, w20, w0
 ia_find_dot:
@@ -650,9 +655,9 @@ log_request:
     stp x21, x22, [sp, #32]
     str x23, [sp, #48]
     
-    mov x19, x0
-    mov x20, x1
-    mov x21, x2
+    /* Load status from global */
+    ldr x0, =current_status
+    ldr w21, [x0]              /* x21 = status code */
     ldr x22, =log_buffer
     
     /* 1. Time */
@@ -685,19 +690,27 @@ log_request:
     mov w0, #' '
     strb w0, [x22], #1
     
-    /* 4. Method */
+    /* 4. Method - read from request buffer */
+    ldr x19, =req_buffer
     mov x0, x22
-    mov x1, x19
-    bl strcpy
-    mov x0, x22
-    bl strlen
-    add x22, x22, x0
+    mov x23, #0                /* method length counter */
+log_copy_method:
+    ldrb w1, [x19, x23]
+    cbz w1, log_method_done
+    cmp w1, #' '
+    beq log_method_done
+    strb w1, [x22, x23]
+    add x23, x23, #1
+    cmp x23, #10
+    blt log_copy_method
+log_method_done:
+    add x22, x22, x23
     mov w0, #' '
     strb w0, [x22], #1
     
-    /* 5. Path */
+    /* 5. Path - from req_path global */
     mov x0, x22
-    mov x1, x20
+    ldr x1, =req_path
     bl strcpy
     mov x0, x22
     bl strlen
@@ -711,11 +724,10 @@ log_request:
     bl strlen
     add x22, x22, x0
     
-    /* 7. Status */
-    mov x0, x21
-    cmp x0, #300
+    /* 7. Status color */
+    cmp w21, #300
     blt l_green
-    cmp x0, #400
+    cmp w21, #400
     blt l_yellow
     b l_red
 l_green: ldr x1, =col_green
@@ -731,7 +743,7 @@ l_col:
     add x22, x22, x0
     
     /* Status Code */
-    mov x0, x21
+    mov w0, w21
     mov x1, x22
     bl itoa
     add x22, x22, x0
@@ -766,4 +778,268 @@ l_col:
     ret
 
 log_exit:
+    ret
+
+/* get_http_date() -> x0 = length of formatted date string in http_date_buffer
+ * Format: "Date: Day, DD Mon YYYY HH:MM:SS GMT\r\n"
+ * Uses clock_gettime(CLOCK_REALTIME) syscall 113
+ */
+get_http_date:
+    stp x29, x30, [sp, #-80]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+
+    /* clock_gettime(CLOCK_REALTIME=0, &timespec) */
+    sub sp, sp, #16
+    mov x0, #0
+    mov x1, sp
+    mov x8, #113
+    svc #0
+
+    ldr x19, [sp]           /* x19 = unix timestamp (seconds) */
+    add sp, sp, #16
+
+    /* Compute time-of-day: seconds within the day */
+    ldr x1, =86400
+    udiv x20, x19, x1      /* x20 = days_since_epoch */
+    msub x21, x20, x1, x19 /* x21 = remaining seconds in day */
+
+    /* Hours, minutes, seconds */
+    mov x1, #3600
+    udiv x22, x21, x1      /* x22 = hours */
+    msub x21, x22, x1, x21
+    mov x1, #60
+    udiv x23, x21, x1      /* x23 = minutes */
+    msub x24, x23, x1, x21 /* x24 = seconds */
+
+    /* Day of week: (days_since_epoch + 4) % 7  (epoch=Thu=4) */
+    add x1, x20, #4
+    mov x2, #7
+    udiv x3, x1, x2
+    msub x25, x3, x2, x1   /* x25 = day_of_week (0=Sun..6=Sat) */
+
+    /* Convert days_since_epoch to year/month/day using civil_from_days algorithm.
+     * Based on Howard Hinnant's algorithm (days from 1970-01-01).
+     * Shift epoch to 0000-03-01 for easier leap year handling.
+     */
+    ldr x0, =719468
+    add x0, x20, x0        /* z = days + 719468 */
+    ldr x1, =146097
+    /* era = z / 146097 (works for positive z since epoch > 0) */
+    udiv x2, x0, x1        /* x2 = era */
+    msub x3, x2, x1, x0    /* x3 = doe (day of era, 0..146096) */
+
+    /* yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365 */
+    mov x4, #1460
+    udiv x5, x3, x4        /* doe/1460 */
+    mov x4, #36524
+    udiv x6, x3, x4        /* doe/36524 */
+    udiv x7, x3, x1        /* doe/146096 */
+    sub x4, x3, x5
+    add x4, x4, x6
+    sub x4, x4, x7
+    mov x5, #365
+    udiv x4, x4, x5        /* x4 = yoe (year of era) */
+
+    /* doy = doe - (365*yoe + yoe/4 - yoe/100) */
+    mul x5, x4, x5         /* 365*yoe */
+    mov x6, #4
+    udiv x6, x4, x6        /* yoe/4 */
+    add x5, x5, x6
+    mov x6, #100
+    udiv x6, x4, x6        /* yoe/100 */
+    sub x5, x5, x6
+    sub x5, x3, x5         /* x5 = doy (day of year, 0..365) */
+
+    /* mp = (5*doy + 2) / 153 */
+    mov x6, #5
+    mul x6, x5, x6
+    add x6, x6, #2
+    mov x7, #153
+    udiv x6, x6, x7        /* x6 = mp */
+
+    /* day = doy - (153*mp + 2)/5 + 1 */
+    mul x7, x6, x7         /* 153*mp */
+    add x7, x7, #2
+    mov x8, #5
+    udiv x7, x7, x8
+    sub x26, x5, x7
+    add x26, x26, #1       /* x26 = day (1-based) */
+
+    /* month: mp < 10 ? mp+3 : mp-9 */
+    cmp x6, #10
+    bge ghd_month_ge10
+    add x6, x6, #3
+    b ghd_month_done
+ghd_month_ge10:
+    sub x6, x6, #9
+ghd_month_done:
+    /* x6 = month (1-12) */
+
+    /* year = yoe + 400*era; if month <= 2, year++ */
+    mov x7, #400
+    mul x7, x2, x7
+    add x4, x4, x7         /* x4 = year */
+    cmp x6, #2
+    bgt ghd_no_year_adj
+    add x4, x4, #1
+ghd_no_year_adj:
+    /* x4=year, x6=month(1-12), x26=day(1-31), x25=dow, x22=hr, x23=min, x24=sec */
+
+    /* Now format: "Date: Day, DD Mon YYYY HH:MM:SS GMT\r\n" into http_date_buffer */
+    ldr x19, =http_date_buffer
+
+    /* "Date: " prefix */
+    ldr x0, =http_date_hdr_prefix
+    mov w1, #'D'
+    /* Copy "Date: " (6 bytes) */
+    ldrb w1, [x0]
+    strb w1, [x19]
+    ldrb w1, [x0, #1]
+    strb w1, [x19, #1]
+    ldrb w1, [x0, #2]
+    strb w1, [x19, #2]
+    ldrb w1, [x0, #3]
+    strb w1, [x19, #3]
+    ldrb w1, [x0, #4]
+    strb w1, [x19, #4]
+    ldrb w1, [x0, #5]
+    strb w1, [x19, #5]
+    add x19, x19, #6
+
+    /* Day name (3 chars from day_names + dow*3) */
+    ldr x0, =day_names
+    mov x1, #3
+    mul x1, x25, x1
+    add x0, x0, x1
+    ldrb w1, [x0]
+    strb w1, [x19]
+    ldrb w1, [x0, #1]
+    strb w1, [x19, #1]
+    ldrb w1, [x0, #2]
+    strb w1, [x19, #2]
+    add x19, x19, #3
+
+    /* ", " */
+    mov w1, #','
+    strb w1, [x19]
+    mov w1, #' '
+    strb w1, [x19, #1]
+    add x19, x19, #2
+
+    /* DD (2-digit day) */
+    mov x0, x26
+    mov x1, #10
+    udiv x2, x0, x1
+    msub x3, x2, x1, x0
+    add w2, w2, #'0'
+    add w3, w3, #'0'
+    strb w2, [x19]
+    strb w3, [x19, #1]
+    add x19, x19, #2
+
+    /* " " */
+    mov w1, #' '
+    strb w1, [x19], #1
+
+    /* Month name (3 chars from month_names + (month-1)*3) */
+    ldr x0, =month_names
+    sub x1, x6, #1
+    mov x2, #3
+    mul x1, x1, x2
+    add x0, x0, x1
+    ldrb w1, [x0]
+    strb w1, [x19]
+    ldrb w1, [x0, #1]
+    strb w1, [x19, #1]
+    ldrb w1, [x0, #2]
+    strb w1, [x19, #2]
+    add x19, x19, #3
+
+    /* " " */
+    mov w1, #' '
+    strb w1, [x19], #1
+
+    /* YYYY (4-digit year) */
+    mov x0, x4
+    mov x1, #1000
+    udiv x2, x0, x1
+    msub x0, x2, x1, x0
+    add w2, w2, #'0'
+    strb w2, [x19], #1
+    mov x1, #100
+    udiv x2, x0, x1
+    msub x0, x2, x1, x0
+    add w2, w2, #'0'
+    strb w2, [x19], #1
+    mov x1, #10
+    udiv x2, x0, x1
+    msub x3, x2, x1, x0
+    add w2, w2, #'0'
+    add w3, w3, #'0'
+    strb w2, [x19], #1
+    strb w3, [x19], #1
+
+    /* " " */
+    mov w1, #' '
+    strb w1, [x19], #1
+
+    /* HH:MM:SS */
+    mov x0, x22
+    mov x1, #10
+    udiv x2, x0, x1
+    msub x3, x2, x1, x0
+    add w2, w2, #'0'
+    add w3, w3, #'0'
+    strb w2, [x19], #1
+    strb w3, [x19], #1
+    mov w1, #':'
+    strb w1, [x19], #1
+
+    mov x0, x23
+    mov x1, #10
+    udiv x2, x0, x1
+    msub x3, x2, x1, x0
+    add w2, w2, #'0'
+    add w3, w3, #'0'
+    strb w2, [x19], #1
+    strb w3, [x19], #1
+    mov w1, #':'
+    strb w1, [x19], #1
+
+    mov x0, x24
+    mov x1, #10
+    udiv x2, x0, x1
+    msub x3, x2, x1, x0
+    add w2, w2, #'0'
+    add w3, w3, #'0'
+    strb w2, [x19], #1
+    strb w3, [x19], #1
+
+    /* " GMT\r\n" */
+    mov w1, #' '
+    strb w1, [x19], #1
+    mov w1, #'G'
+    strb w1, [x19], #1
+    mov w1, #'M'
+    strb w1, [x19], #1
+    mov w1, #'T'
+    strb w1, [x19], #1
+    mov w1, #13
+    strb w1, [x19], #1
+    mov w1, #10
+    strb w1, [x19], #1
+
+    /* Calculate total length */
+    ldr x0, =http_date_buffer
+    sub x0, x19, x0        /* x0 = length */
+
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #80
     ret

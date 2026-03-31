@@ -3,6 +3,7 @@
 .include "src/defs.s"
 
 .global handle_client
+.extern get_http_date
 
 .text
 
@@ -49,7 +50,7 @@ hc_loop:
     /* 1. Read Request */
     mov x0, x20
     ldr x1, =req_buffer
-    mov x2, #8192
+    mov x2, #8191
     mov x8, SYS_READ
     svc #0
 
@@ -64,6 +65,20 @@ hc_loop:
     bl parse_request
     cmp x0, #0
     bne send_400
+
+    /* 2.05 Detect HTTP Method */
+    ldr x0, =req_buffer
+    bl detect_method         /* returns method type in x0 */
+    ldr x1, =current_method
+    str w0, [x1]             /* save method type */
+    
+    /* Check for OPTIONS -> respond immediately */
+    cmp w0, #METHOD_OPTIONS
+    beq send_options
+    
+    /* Check for unsupported methods */
+    cmp w0, #METHOD_UNKNOWN
+    beq send_405
     
     /* 2.1 Check Proxy */
     ldr x0, =upstream_ip
@@ -317,9 +332,15 @@ serve_file:
     cmp x19, #0
     beq set_mime_bin
 
-    /* Compare Extensions */
+    /* Compare Extensions - full MIME type detection */
     mov x0, x19
     ldr x1, =ext_html
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_html
+
+    mov x0, x19
+    ldr x1, =ext_htm
     bl strcmp
     cmp x0, #0
     beq set_mime_html
@@ -335,21 +356,177 @@ serve_file:
     bl strcmp
     cmp x0, #0
     beq set_mime_js
+
+    mov x0, x19
+    ldr x1, =ext_mjs
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_js
     
+    mov x0, x19
+    ldr x1, =ext_json
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_json
+
+    mov x0, x19
+    ldr x1, =ext_png
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_png
+
+    mov x0, x19
+    ldr x1, =ext_jpg
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_jpg
+
+    mov x0, x19
+    ldr x1, =ext_jpeg
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_jpg
+
+    mov x0, x19
+    ldr x1, =ext_gif
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_gif
+
+    mov x0, x19
+    ldr x1, =ext_webp
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_webp
+
+    mov x0, x19
+    ldr x1, =ext_svg
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_svg
+
+    mov x0, x19
+    ldr x1, =ext_ico
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_ico
+
+    mov x0, x19
+    ldr x1, =ext_xml
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_xml
+
+    mov x0, x19
+    ldr x1, =ext_pdf
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_pdf
+
     mov x0, x19
     ldr x1, =ext_txt
     bl strcmp
     cmp x0, #0
     beq set_mime_txt
-    
-    /* Check .py for CGI */
+
+    mov x0, x19
+    ldr x1, =ext_woff
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_woff
+
+    mov x0, x19
+    ldr x1, =ext_woff2
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_woff2
+
+    mov x0, x19
+    ldr x1, =ext_ttf
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_ttf
+
+    mov x0, x19
+    ldr x1, =ext_eot
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_eot
+
+    mov x0, x19
+    ldr x1, =ext_mp4
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_mp4
+
+    mov x0, x19
+    ldr x1, =ext_webm
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_webm
+
+    mov x0, x19
+    ldr x1, =ext_mp3
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_mp3
+
+    mov x0, x19
+    ldr x1, =ext_wav
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_wav
+
+    mov x0, x19
+    ldr x1, =ext_zip
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_zip
+
+    mov x0, x19
+    ldr x1, =ext_gz
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_gz
+
+    mov x0, x19
+    ldr x1, =ext_tar
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_tar
+
+    mov x0, x19
+    ldr x1, =ext_wasm
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_wasm
+
+    mov x0, x19
+    ldr x1, =ext_map
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_json
+
+    /* Check .py / .sh / .cgi for CGI */
     mov x0, x19
     ldr x1, =ext_py
     bl strcmp
     cmp x0, #0
     beq invoke_cgi
+
+    mov x0, x19
+    ldr x1, =ext_sh
+    bl strcmp
+    cmp x0, #0
+    beq invoke_cgi
+
+    mov x0, x19
+    ldr x1, =ext_cgi
+    bl strcmp
+    cmp x0, #0
+    beq invoke_cgi
     
-    /* Default */
+    /* Default: application/octet-stream */
     b set_mime_bin
 
 invoke_cgi:
@@ -381,9 +558,93 @@ set_mime_js:
     ldr x25, =mime_js
     mov x26, #22
     b send_response
+set_mime_json:
+    ldr x25, =mime_json
+    mov x26, #16
+    b send_response
+set_mime_png:
+    ldr x25, =mime_png
+    mov x26, #9
+    b send_response
+set_mime_jpg:
+    ldr x25, =mime_jpg
+    mov x26, #10
+    b send_response
+set_mime_gif:
+    ldr x25, =mime_gif
+    mov x26, #9
+    b send_response
+set_mime_webp:
+    ldr x25, =mime_webp
+    mov x26, #10
+    b send_response
+set_mime_svg:
+    ldr x25, =mime_svg
+    mov x26, #13
+    b send_response
+set_mime_ico:
+    ldr x25, =mime_ico
+    mov x26, #12
+    b send_response
+set_mime_xml:
+    ldr x25, =mime_xml
+    mov x26, #15
+    b send_response
+set_mime_pdf:
+    ldr x25, =mime_pdf
+    mov x26, #15
+    b send_response
 set_mime_txt:
     ldr x25, =mime_txt
     mov x26, #10
+    b send_response
+set_mime_woff:
+    ldr x25, =mime_woff
+    mov x26, #17
+    b send_response
+set_mime_woff2:
+    ldr x25, =mime_woff2
+    mov x26, #13
+    b send_response
+set_mime_ttf:
+    ldr x25, =mime_ttf
+    mov x26, #9
+    b send_response
+set_mime_eot:
+    ldr x25, =mime_eot
+    mov x26, #39
+    b send_response
+set_mime_mp4:
+    ldr x25, =mime_mp4
+    mov x26, #9
+    b send_response
+set_mime_webm:
+    ldr x25, =mime_webm
+    mov x26, #10
+    b send_response
+set_mime_mp3:
+    ldr x25, =mime_mp3
+    mov x26, #10
+    b send_response
+set_mime_wav:
+    ldr x25, =mime_wav
+    mov x26, #9
+    b send_response
+set_mime_zip:
+    ldr x25, =mime_zip
+    mov x26, #15
+    b send_response
+set_mime_gz:
+    ldr x25, =mime_gzip
+    mov x26, #16
+    b send_response
+set_mime_tar:
+    ldr x25, =mime_tar
+    mov x26, #19
+    b send_response
+set_mime_wasm:
+    ldr x25, =mime_wasm
+    mov x26, #16
     b send_response
 set_mime_bin:
     ldr x25, =mime_bin
@@ -416,6 +677,18 @@ do_send_conn:
     mov x0, x20
     ldr x1, =http_server_hdr
     ldr x2, =len_server_hdr
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* 1.51 Write Date Header */
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl get_http_date
+    ldp x29, x30, [sp], #16
+    /* x0 = length of date string in http_date_buffer */
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =http_date_buffer
     mov x8, SYS_WRITE
     svc #0
 
@@ -468,13 +741,26 @@ do_send_conn:
     mov x8, SYS_WRITE
     svc #0
     
-    /* 5. Write header end */
+    /* 5. Write Accept-Ranges header */
+    mov x0, x20
+    ldr x1, =http_accept_ranges
+    ldr x2, =len_accept_ranges
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* 5.5 Write header end */
     mov x0, x20
     ldr x1, =http_end
     mov x2, #4
     mov x8, SYS_WRITE
     svc #0
     
+    /* Check if HEAD request - skip body */
+    ldr x0, =current_method
+    ldr w0, [x0]
+    cmp w0, #METHOD_HEAD
+    beq head_skip_body
+
     /* 6. Send file content using sendfile (Loop) */
     ldr x0, =sendfile_offset
     str xzr, [x0]            /* offset = 0 */
@@ -496,6 +782,7 @@ sendfile_loop:
     sub x22, x22, x0         /* remaining -= sent */
     b sendfile_loop
 
+head_skip_body:
 sendfile_done:
     /* Close file */
     mov x0, x21
@@ -603,7 +890,44 @@ send_502:
     bl log_request
     b hc_close_final
 
+send_options:
+    mov x0, x20
+    ldr x1, =http_options_resp
+    ldr x2, =len_options_resp
+    mov x8, SYS_WRITE
+    svc #0
+    
+    ldr x0, =current_status
+    mov w1, #200
+    str w1, [x0]
+    bl log_request
+    cmp x28, #1
+    beq hc_loop
+    b hc_close_final
+
+send_405:
+    mov x0, x20
+    ldr x1, =http_405
+    ldr x2, =len_405
+    mov x8, SYS_WRITE
+    svc #0
+    
+    ldr x0, =current_status
+    mov w1, #405
+    str w1, [x0]
+    bl log_request
+    b hc_close_final
+
 hc_close_final:
+    /* Unregister from epoll */
+    ldr x0, =epoll_fd
+    ldr w0, [x0]
+    mov x1, #EPOLL_CTL_DEL
+    mov x2, x20
+    mov x3, #0
+    mov x8, SYS_EPOLL_CTL
+    svc #0
+
     mov x0, x20
     mov x8, SYS_CLOSE
     svc #0
@@ -683,6 +1007,7 @@ pr_path_done:
     /* Check if path is empty -> / */
     cmp x5, #0
     bne pr_ok
+    ldr x4, =req_path
     mov w3, #47     /* / */
     strb w3, [x4]
     strb wzr, [x4, #1]
@@ -706,7 +1031,19 @@ ct_loop:
     cbz w3, ct_ok
     cmp w3, #46     /* . */
     beq ct_dot
+    cmp w3, #47     /* / */
+    beq ct_slash
     add x2, x2, #1
+    b ct_loop
+ct_slash:
+    add x2, x2, #1
+    ldrb w3, [x1, x2]
+    cmp w3, #46     /* . */
+    bne ct_loop
+    add x2, x2, #1
+    ldrb w3, [x1, x2]
+    cmp w3, #46     /* . */
+    beq ct_fail
     b ct_loop
 ct_dot:
     add x2, x2, #1
@@ -719,4 +1056,167 @@ ct_ok:
     ret
 ct_fail:
     mov x0, #-1
+    ret
+
+/* detect_method(req_buffer) -> method type in x0 */
+/* Method constants: GET=1, HEAD=2, POST=3, PUT=4, DELETE=5, OPTIONS=6, PATCH=7, UNKNOWN=0 */
+.equ METHOD_GET, 1
+.equ METHOD_HEAD, 2
+.equ METHOD_POST, 3
+.equ METHOD_PUT, 4
+.equ METHOD_DELETE, 5
+.equ METHOD_OPTIONS, 6
+.equ METHOD_PATCH, 7
+.equ METHOD_UNKNOWN, 0
+
+detect_method:
+    /* Check first byte to fast-path */
+    ldrb w1, [x0]
+    
+    /* 'G' = 0x47 -> GET */
+    cmp w1, #'G'
+    beq dm_check_get
+    /* 'H' = 0x48 -> HEAD */
+    cmp w1, #'H'
+    beq dm_check_head
+    /* 'P' = 0x50 -> POST, PUT, PATCH */
+    cmp w1, #'P'
+    beq dm_check_p
+    /* 'D' = 0x44 -> DELETE */
+    cmp w1, #'D'
+    beq dm_check_delete
+    /* 'O' = 0x4F -> OPTIONS */
+    cmp w1, #'O'
+    beq dm_check_options
+    
+    mov x0, #METHOD_UNKNOWN
+    ret
+
+dm_check_get:
+    ldrb w1, [x0, #1]
+    cmp w1, #'E'
+    bne dm_unknown
+    ldrb w1, [x0, #2]
+    cmp w1, #'T'
+    bne dm_unknown
+    ldrb w1, [x0, #3]
+    cmp w1, #' '
+    bne dm_unknown
+    mov x0, #METHOD_GET
+    ret
+
+dm_check_head:
+    ldrb w1, [x0, #1]
+    cmp w1, #'E'
+    bne dm_unknown
+    ldrb w1, [x0, #2]
+    cmp w1, #'A'
+    bne dm_unknown
+    ldrb w1, [x0, #3]
+    cmp w1, #'D'
+    bne dm_unknown
+    ldrb w1, [x0, #4]
+    cmp w1, #' '
+    bne dm_unknown
+    mov x0, #METHOD_HEAD
+    ret
+
+dm_check_p:
+    ldrb w1, [x0, #1]
+    cmp w1, #'O'
+    beq dm_check_post
+    cmp w1, #'U'
+    beq dm_check_put
+    cmp w1, #'A'
+    beq dm_check_patch
+    b dm_unknown
+
+dm_check_post:
+    ldrb w1, [x0, #2]
+    cmp w1, #'S'
+    bne dm_unknown
+    ldrb w1, [x0, #3]
+    cmp w1, #'T'
+    bne dm_unknown
+    ldrb w1, [x0, #4]
+    cmp w1, #' '
+    bne dm_unknown
+    mov x0, #METHOD_POST
+    ret
+
+dm_check_put:
+    ldrb w1, [x0, #2]
+    cmp w1, #'T'
+    bne dm_unknown
+    ldrb w1, [x0, #3]
+    cmp w1, #' '
+    bne dm_unknown
+    mov x0, #METHOD_PUT
+    ret
+
+dm_check_delete:
+    ldrb w1, [x0, #1]
+    cmp w1, #'E'
+    bne dm_unknown
+    ldrb w1, [x0, #2]
+    cmp w1, #'L'
+    bne dm_unknown
+    ldrb w1, [x0, #3]
+    cmp w1, #'E'
+    bne dm_unknown
+    ldrb w1, [x0, #4]
+    cmp w1, #'T'
+    bne dm_unknown
+    ldrb w1, [x0, #5]
+    cmp w1, #'E'
+    bne dm_unknown
+    ldrb w1, [x0, #6]
+    cmp w1, #' '
+    bne dm_unknown
+    mov x0, #METHOD_DELETE
+    ret
+
+dm_check_options:
+    ldrb w1, [x0, #1]
+    cmp w1, #'P'
+    bne dm_unknown
+    ldrb w1, [x0, #2]
+    cmp w1, #'T'
+    bne dm_unknown
+    ldrb w1, [x0, #3]
+    cmp w1, #'I'
+    bne dm_unknown
+    ldrb w1, [x0, #4]
+    cmp w1, #'O'
+    bne dm_unknown
+    ldrb w1, [x0, #5]
+    cmp w1, #'N'
+    bne dm_unknown
+    ldrb w1, [x0, #6]
+    cmp w1, #'S'
+    bne dm_unknown
+    ldrb w1, [x0, #7]
+    cmp w1, #' '
+    bne dm_unknown
+    mov x0, #METHOD_OPTIONS
+    ret
+
+dm_check_patch:
+    ldrb w1, [x0, #2]
+    cmp w1, #'T'
+    bne dm_unknown
+    ldrb w1, [x0, #3]
+    cmp w1, #'C'
+    bne dm_unknown
+    ldrb w1, [x0, #4]
+    cmp w1, #'H'
+    bne dm_unknown
+    ldrb w1, [x0, #5]
+    cmp w1, #' '
+    bne dm_unknown
+    mov x0, #METHOD_PATCH
+    ret
+
+dm_unknown:
+    mov x0, #METHOD_UNKNOWN
     ret
