@@ -246,6 +246,37 @@ print_version:
     svc #0
 
 start_server_label:
+    /* Initialize configuration defaults */
+    ldr x0, =default_worker_count
+    ldr w0, [x0]
+    ldr x1, =worker_count
+    str w0, [x1]
+    
+    ldr x0, =default_keepalive_timeout
+    ldr x0, [x0]
+    ldr x1, =keepalive_timeout_val
+    str x0, [x1]
+    
+    ldr x0, =default_client_max_body
+    ldr x0, [x0]
+    ldr x1, =client_max_body_val
+    str x0, [x1]
+    
+    ldr x0, =default_server_tokens
+    ldr w0, [x0]
+    ldr x1, =server_tokens_flag
+    str w0, [x1]
+    
+    ldr x0, =default_autoindex
+    ldr w0, [x0]
+    ldr x1, =autoindex_flag
+    str w0, [x1]
+    
+    ldr x0, =default_gzip_static
+    ldr w0, [x0]
+    ldr x1, =gzip_static_flag
+    str w0, [x1]
+
     /* 1. Print Banner Title "✨ ANX Web Server " */
     mov x0, STDOUT
     ldr x1, =p_msg_welcome_title
@@ -304,10 +335,26 @@ start_server_label:
     mov x8, SYS_WRITE
     svc #0
     
-    /* Workers Message */
+    /* Workers Message (dynamic count) */
     mov x0, STDOUT
-    ldr x1, =msg_workers
-    ldr x2, =len_msg_workers
+    ldr x1, =msg_workers_prefix
+    ldr x2, =len_msg_workers_prefix
+    mov x8, SYS_WRITE
+    svc #0
+    
+    ldr x0, =worker_count
+    ldr w0, [x0]
+    ldr x1, =num_buffer
+    bl itoa
+    mov x2, x0
+    mov x0, STDOUT
+    ldr x1, =num_buffer
+    mov x8, SYS_WRITE
+    svc #0
+    
+    mov x0, STDOUT
+    ldr x1, =msg_workers_suffix
+    ldr x2, =len_msg_workers_suffix
     mov x8, SYS_WRITE
     svc #0
     

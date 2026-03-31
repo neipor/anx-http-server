@@ -143,6 +143,15 @@
     msg_workers:    .ascii "\x1b[0m\n \x1b[1;32m[WORKER]\x1b[0m Spawning \x1b[1m64\x1b[0m worker processes...\n"
     len_msg_workers = . - msg_workers
     
+    msg_workers_prefix: .ascii "\x1b[0m\n \x1b[1;32m[WORKER]\x1b[0m Spawning \x1b[1m"
+    len_msg_workers_prefix = . - msg_workers_prefix
+    
+    msg_workers_suffix: .ascii "\x1b[0m worker processes...\n"
+    len_msg_workers_suffix = . - msg_workers_suffix
+    
+    .global msg_workers_prefix, len_msg_workers_prefix
+    .global msg_workers_suffix, len_msg_workers_suffix
+    
     msg_daemon:     .ascii " \x1b[1;36m[SYSTEM]\x1b[0m Running in background (Daemon)...\n"
     len_msg_daemon = . - msg_daemon
 
@@ -172,6 +181,27 @@
     key_access_log: .asciz "access_log="
     key_upstream_ip: .asciz "upstream_ip="
     key_upstream_port: .asciz "upstream_port="
+    key_worker_processes: .asciz "worker_processes="
+    key_keepalive_timeout: .asciz "keepalive_timeout="
+    key_client_max_body: .asciz "client_max_body_size="
+    key_server_tokens: .asciz "server_tokens="
+    key_autoindex:  .asciz "autoindex="
+    key_gzip_static: .asciz "gzip_static="
+    key_error_page_dir: .asciz "error_page_dir="
+    key_cache_control: .asciz "cache_control="
+    key_index:      .asciz "index="
+    key_sendfile:   .asciz "sendfile="
+    key_tcp_nopush: .asciz "tcp_nopush="
+    key_tcp_nodelay:.asciz "tcp_nodelay="
+    key_proxy_set_header: .asciz "proxy_set_header="
+    key_add_header: .asciz "add_header="
+    str_on:         .asciz "on"
+    str_off:        .asciz "off"
+    
+    .global key_worker_processes, key_keepalive_timeout, key_client_max_body
+    .global key_server_tokens, key_autoindex, key_gzip_static, key_error_page_dir
+    .global key_cache_control, key_index, key_sendfile, key_tcp_nopush, key_tcp_nodelay
+    .global key_proxy_set_header, key_add_header, str_on, str_off
     
     pid_file_path: .asciz "server.pid"
     
@@ -182,8 +212,20 @@
     http_server_hdr: .ascii "Server: ANX/4.1\r\n"
     len_server_hdr = . - http_server_hdr
     
+    http_server_hdr_hidden: .ascii "Server: ANX\r\n"
+    len_server_hdr_hidden = . - http_server_hdr_hidden
+    
     http_status_200: .ascii "HTTP/1.1 200 OK\r\n"
     len_status_200 = . - http_status_200
+    
+    http_status_206: .ascii "HTTP/1.1 206 Partial Content\r\n"
+    len_status_206 = . - http_status_206
+    
+    http_resp_405: .ascii "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nAllow: GET, HEAD, POST\r\nConnection: close\r\n\r\n"
+    len_resp_405 = . - http_resp_405
+    
+    http_resp_413: .ascii "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    len_resp_413 = . - http_resp_413
     
     http_conn_ka: .ascii "Connection: keep-alive\r\n"
     len_conn_ka = . - http_conn_ka
@@ -200,12 +242,61 @@
     http_content_type: .ascii "Content-Type: "
     len_content_type = . - http_content_type
     
+    http_accept_ranges: .ascii "Accept-Ranges: bytes\r\n"
+    len_accept_ranges = . - http_accept_ranges
+    
+    http_content_range_start: .ascii "Content-Range: bytes "
+    len_content_range_start = . - http_content_range_start
+    
+    http_cache_control_start: .ascii "Cache-Control: "
+    len_cache_control_start = . - http_cache_control_start
+    
+    http_last_modified: .ascii "Last-Modified: "
+    len_last_modified = . - http_last_modified
+    
+    http_x_forwarded_for: .ascii "X-Forwarded-For: "
+    len_x_forwarded_for = . - http_x_forwarded_for
+    
+    http_x_real_ip: .ascii "X-Real-IP: "
+    len_x_real_ip = . - http_x_real_ip
+    
+    http_vary: .ascii "Vary: Accept-Encoding\r\n"
+    len_vary = . - http_vary
+    
+    http_content_encoding_gzip: .ascii "Content-Encoding: gzip\r\n"
+    len_content_encoding_gzip = . - http_content_encoding_gzip
+    
+    http_cache_static: .ascii "Cache-Control: public, max-age=86400\r\n"
+    len_cache_static = . - http_cache_static
+    
+    http_cache_dynamic: .ascii "Cache-Control: no-cache\r\n"
+    len_cache_dynamic = . - http_cache_dynamic
+    
+    str_range_hdr: .asciz "Range: bytes="
+    str_if_range:  .asciz "If-Range: "
+    str_head_method: .asciz "HEAD"
+    
     .global http_status_200, len_status_200
+    .global http_status_206, len_status_206
+    .global http_resp_405, len_resp_405
+    .global http_resp_413, len_resp_413
     .global http_conn_ka, len_conn_ka
     .global http_conn_close_hdr, len_conn_close_hdr
     .global http_etag_start, len_etag_start
     .global http_quote_newline, len_quote_newline
     .global etag_buffer
+    .global http_accept_ranges, len_accept_ranges
+    .global http_content_range_start, len_content_range_start
+    .global http_cache_control_start, len_cache_control_start
+    .global http_last_modified, len_last_modified
+    .global http_x_forwarded_for, len_x_forwarded_for
+    .global http_x_real_ip, len_x_real_ip
+    .global http_vary, len_vary
+    .global http_content_encoding_gzip, len_content_encoding_gzip
+    .global http_cache_static, len_cache_static
+    .global http_cache_dynamic, len_cache_dynamic
+    .global str_range_hdr, str_if_range, str_head_method
+    .global http_server_hdr_hidden, len_server_hdr_hidden
     
     /* 304 Not Modified */
     http_304:
@@ -331,11 +422,69 @@
     .global len_mime_bin_val
     len_mime_bin_val: .word len_mime_bin
 
+    /* Additional MIME Types */
+    mime_gif:       .asciz "image/gif"
+    len_mime_gif = . - mime_gif
+    mime_webp:      .asciz "image/webp"
+    len_mime_webp = . - mime_webp
+    mime_avif:      .asciz "image/avif"
+    len_mime_avif = . - mime_avif
+    mime_bmp:       .asciz "image/bmp"
+    len_mime_bmp = . - mime_bmp
+    mime_mp4:       .asciz "video/mp4"
+    len_mime_mp4 = . - mime_mp4
+    mime_webm:      .asciz "video/webm"
+    len_mime_webm = . - mime_webm
+    mime_mp3:       .asciz "audio/mpeg"
+    len_mime_mp3 = . - mime_mp3
+    mime_wav:       .asciz "audio/wav"
+    len_mime_wav = . - mime_wav
+    mime_ogg:       .asciz "audio/ogg"
+    len_mime_ogg = . - mime_ogg
+    mime_flac:      .asciz "audio/flac"
+    len_mime_flac = . - mime_flac
+    mime_woff:      .asciz "font/woff"
+    len_mime_woff = . - mime_woff
+    mime_woff2:     .asciz "font/woff2"
+    len_mime_woff2 = . - mime_woff2
+    mime_ttf:       .asciz "font/ttf"
+    len_mime_ttf = . - mime_ttf
+    mime_otf:       .asciz "font/otf"
+    len_mime_otf = . - mime_otf
+    mime_wasm:      .asciz "application/wasm"
+    len_mime_wasm = . - mime_wasm
+    mime_zip:       .asciz "application/zip"
+    len_mime_zip = . - mime_zip
+    mime_gzip:      .asciz "application/gzip"
+    len_mime_gzip = . - mime_gzip
+    mime_tar:       .asciz "application/x-tar"
+    len_mime_tar = . - mime_tar
+    mime_csv:       .asciz "text/csv"
+    len_mime_csv = . - mime_csv
+    mime_md:        .asciz "text/markdown"
+    len_mime_md = . - mime_md
+    mime_yaml:      .asciz "text/yaml"
+    len_mime_yaml = . - mime_yaml
+    mime_map:       .asciz "application/json"
+    len_mime_map = . - mime_map
+
+    .global mime_gif, len_mime_gif, mime_webp, len_mime_webp, mime_avif, len_mime_avif
+    .global mime_bmp, len_mime_bmp, mime_mp4, len_mime_mp4, mime_webm, len_mime_webm
+    .global mime_mp3, len_mime_mp3, mime_wav, len_mime_wav, mime_ogg, len_mime_ogg
+    .global mime_flac, len_mime_flac, mime_woff, len_mime_woff, mime_woff2, len_mime_woff2
+    .global mime_ttf, len_mime_ttf, mime_otf, len_mime_otf, mime_wasm, len_mime_wasm
+    .global mime_zip, len_mime_zip, mime_gzip, len_mime_gzip, mime_tar, len_mime_tar
+    .global mime_csv, len_mime_csv, mime_md, len_mime_md, mime_yaml, len_mime_yaml
+    .global mime_map, len_mime_map
+
     ext_html:       .asciz ".html"
+    ext_htm:        .asciz ".htm"
     ext_css:        .asciz ".css"
     ext_js:         .asciz ".js"
+    ext_mjs:        .asciz ".mjs"
     ext_png:        .asciz ".png"
     ext_jpg:        .asciz ".jpg"
+    ext_jpeg:       .asciz ".jpeg"
     
     ext_json:       .asciz ".json"
     ext_svg:        .asciz ".svg"
@@ -344,6 +493,37 @@
     ext_txt:        .asciz ".txt"
     ext_pdf:        .asciz ".pdf"
     ext_py:         .asciz ".py"
+
+    ext_gif:        .asciz ".gif"
+    ext_webp:       .asciz ".webp"
+    ext_avif:       .asciz ".avif"
+    ext_bmp:        .asciz ".bmp"
+    ext_mp4:        .asciz ".mp4"
+    ext_webm:       .asciz ".webm"
+    ext_mp3:        .asciz ".mp3"
+    ext_wav:        .asciz ".wav"
+    ext_ogg:        .asciz ".ogg"
+    ext_flac:       .asciz ".flac"
+    ext_woff:       .asciz ".woff"
+    ext_woff2:      .asciz ".woff2"
+    ext_ttf:        .asciz ".ttf"
+    ext_otf:        .asciz ".otf"
+    ext_wasm:       .asciz ".wasm"
+    ext_zip:        .asciz ".zip"
+    ext_gz:         .asciz ".gz"
+    ext_tar:        .asciz ".tar"
+    ext_csv:        .asciz ".csv"
+    ext_md:         .asciz ".md"
+    ext_yaml:       .asciz ".yaml"
+    ext_yml:        .asciz ".yml"
+    ext_map:        .asciz ".map"
+
+    .global ext_htm, ext_jpeg, ext_mjs
+    .global ext_gif, ext_webp, ext_avif, ext_bmp
+    .global ext_mp4, ext_webm, ext_mp3, ext_wav, ext_ogg, ext_flac
+    .global ext_woff, ext_woff2, ext_ttf, ext_otf
+    .global ext_wasm, ext_zip, ext_gz, ext_tar
+    .global ext_csv, ext_md, ext_yaml, ext_yml, ext_map
 
     index_file:     .asciz "/index.html"
 
@@ -431,6 +611,11 @@
     time_buffer:    .skip 32
     epoll_events:   .skip 512
     iovec_buffer:   .skip 256
+    range_buffer:   .skip 128
+    cache_ctrl_val: .skip 128
+    index_name:     .skip 128
+    error_page_path: .skip 256
+    gzip_path_buf:  .skip 2048
     
     .align 8
     last_log_sec:   .skip 8
@@ -446,6 +631,21 @@
     env_buffer:     .skip 4096
     req_method:     .skip 16
     
+    /* Configuration variables */
+    worker_count:   .skip 4
+    keepalive_timeout_val: .skip 8
+    client_max_body_val: .skip 8
+    server_tokens_flag: .skip 4
+    autoindex_flag: .skip 4
+    gzip_static_flag: .skip 4
+    is_head_request: .skip 4
+    range_start:    .skip 8
+    range_end:      .skip 8
+    has_range:      .skip 4
+    response_size:  .skip 8
+    tcp_nopush_flag: .skip 4
+    tcp_nodelay_flag: .skip 4
+    
     .global current_status
     .global access_log_path
     .global query_string
@@ -453,6 +653,26 @@
     .global log_fd
     .global key_access_log
     .global req_method
+    .global worker_count, keepalive_timeout_val, client_max_body_val
+    .global server_tokens_flag, autoindex_flag, gzip_static_flag
+    .global is_head_request, range_start, range_end, has_range
+    .global response_size, range_buffer, gzip_path_buf
+    .global cache_ctrl_val, index_name, error_page_path
+    .global tcp_nopush_flag, tcp_nodelay_flag
 
 .data
     log_fd:         .word 1     /* Default to stdout (1) */
+    
+    /* Default configuration values */
+    default_worker_count: .word 4       /* Default 4 workers */
+    default_keepalive_timeout: .quad 65 /* Default 65 seconds (nginx default) */
+    default_client_max_body: .quad 1048576 /* Default 1MB */
+    default_server_tokens: .word 1      /* on by default */
+    default_autoindex: .word 1          /* on by default */
+    default_gzip_static: .word 0        /* off by default */
+    default_tcp_nopush: .word 0
+    default_tcp_nodelay: .word 1
+    
+    .global default_worker_count, default_keepalive_timeout, default_client_max_body
+    .global default_server_tokens, default_autoindex, default_gzip_static
+    .global default_tcp_nopush, default_tcp_nodelay

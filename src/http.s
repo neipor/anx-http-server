@@ -45,6 +45,13 @@ ip_skip:
 
     mov x28, #1             /* x28 = keep_alive (1=true) */
 
+    /* Clear HEAD request flag */
+    ldr x0, =is_head_request
+    str wzr, [x0]
+    /* Clear range flag */
+    ldr x0, =has_range
+    str wzr, [x0]
+
 hc_loop:
     /* 1. Read Request */
     mov x0, x20
@@ -64,6 +71,28 @@ hc_loop:
     bl parse_request
     cmp x0, #0
     bne send_400
+    
+    /* 2.0 Check HEAD Method */
+    ldr x0, =req_method
+    ldr x1, =str_head_method
+    bl strcmp
+    cmp x0, #0
+    bne not_head_method
+    ldr x0, =is_head_request
+    mov w1, #1
+    str w1, [x0]
+not_head_method:
+
+    /* 2.05 Parse Range Header */
+    ldr x0, =req_buffer
+    ldr x1, =str_range_hdr
+    bl strstr
+    cmp x0, #0
+    beq no_range_header
+    /* Found "Range: bytes=" - parse start-end */
+    add x0, x0, #13        /* Skip "Range: bytes=" */
+    bl parse_range_header
+no_range_header:
     
     /* 2.1 Check Proxy */
     ldr x0, =upstream_ip
@@ -142,13 +171,115 @@ handle_proxy:
     
     mov x21, x0             /* x21 = upstream_fd */
     
-    /* Forward Request */
+    /* Inject X-Forwarded-For and X-Real-IP headers into request */
+    /* Write original request up to the first \r\n */
+    ldr x0, =req_buffer
+    mov x1, #0
+find_first_line_end:
+    ldrb w2, [x0, x1]
+    cbz w2, proxy_send_orig
+    cmp w2, #13             /* \r */
+    beq found_first_line
+    add x1, x1, #1
+    b find_first_line_end
+found_first_line:
+    add x1, x1, #2         /* Skip \r\n */
+    /* Write first line */
+    mov x0, x21
+    ldr x1, =req_buffer
+    mov x2, x1
+    ldr x1, =req_buffer
+    /* Calculate line length */
+    ldr x3, =req_buffer
+    mov x4, #0
+ffle_calc:
+    ldrb w5, [x3, x4]
+    cmp w5, #10             /* \n */
+    beq ffle_done
+    add x4, x4, #1
+    b ffle_calc
+ffle_done:
+    add x4, x4, #1         /* Include \n */
+    mov x2, x4
+    mov x0, x21
+    ldr x1, =req_buffer
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write X-Forwarded-For header */
+    mov x0, x21
+    ldr x1, =http_x_forwarded_for
+    ldr x2, =len_x_forwarded_for
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write client IP */
+    ldr x0, =client_ip_str
+    bl strlen
+    mov x2, x0
+    mov x0, x21
+    ldr x1, =client_ip_str
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write \r\n */
+    mov x0, x21
+    ldr x1, =http_end
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write X-Real-IP header */
+    mov x0, x21
+    ldr x1, =http_x_real_ip
+    ldr x2, =len_x_real_ip
+    mov x8, SYS_WRITE
+    svc #0
+    
+    ldr x0, =client_ip_str
+    bl strlen
+    mov x2, x0
+    mov x0, x21
+    ldr x1, =client_ip_str
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write \r\n */
+    mov x0, x21
+    ldr x1, =http_end
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write rest of original headers (skip first line) */
+    ldr x3, =req_buffer
+    mov x4, #0
+skip_orig_first:
+    ldrb w5, [x3, x4]
+    cmp w5, #10
+    beq orig_rest_found
+    add x4, x4, #1
+    b skip_orig_first
+orig_rest_found:
+    add x4, x4, #1
+    add x1, x3, x4
+    sub x2, x25, x4        /* remaining len */
+    cmp x2, #0
+    ble proxy_relay_start
+    mov x0, x21
+    mov x8, SYS_WRITE
+    svc #0
+    b proxy_relay_start
+
+proxy_send_orig:
+    /* Forward Request (fallback - send entire request) */
     mov x0, x21
     ldr x1, =req_buffer
     mov x2, x25             /* len */
     mov x8, SYS_WRITE
     svc #0
-    
+
+proxy_relay_start:
     /* Relay Response Loop */
 proxy_loop:
     mov x0, x21             /* upstream */
@@ -304,6 +435,58 @@ handle_dir:
 /* Serve File Logic */
 /* ------------------------------------------------------------------------- */
 serve_file:
+    /* Check gzip_static: if enabled, try path.gz first */
+    ldr x0, =gzip_static_flag
+    ldr w0, [x0]
+    cbz w0, serve_file_normal
+    
+    /* Check if client accepts gzip encoding */
+    ldr x0, =req_buffer
+    ldr x1, =str_accept_enc
+    bl strstr
+    cmp x0, #0
+    beq serve_file_normal
+    
+    /* Build .gz path */
+    ldr x0, =gzip_path_buf
+    ldr x1, =path_buffer
+    bl strcpy
+    ldr x0, =gzip_path_buf
+    ldr x1, =ext_gz
+    bl strcat
+    
+    /* Try to stat .gz file */
+    mov x0, AT_FDCWD
+    ldr x1, =gzip_path_buf
+    ldr x2, =stat_buffer
+    mov x3, #0
+    mov x8, SYS_NEWFSTATAT
+    svc #0
+    cmp x0, #0
+    blt serve_file_normal
+    
+    /* .gz file exists! Open it instead */
+    mov x0, AT_FDCWD
+    ldr x1, =gzip_path_buf
+    mov x2, O_RDONLY
+    mov x3, #0
+    mov x8, SYS_OPENAT
+    svc #0
+    cmp x0, #0
+    blt serve_file_normal
+    mov x21, x0             /* x21 = file_fd (gzipped) */
+    
+    /* Update size from .gz stat */
+    ldr x1, =stat_buffer
+    ldr x22, [x1, #48]
+    
+    /* Set gzip flag for response */
+    mov x24, #1             /* x24 = is_gzip */
+    b serve_file_detect_mime
+
+serve_file_normal:
+    mov x24, #0             /* x24 = not gzip */
+    
     /* Open File */
     mov x0, AT_FDCWD
     ldr x1, =path_buffer
@@ -315,6 +498,8 @@ serve_file:
     cmp x0, #0
     blt send_403
     mov x21, x0             /* x21 = file_fd */
+
+serve_file_detect_mime:
 
     /* MIME Detection */
     ldr x0, =path_buffer
@@ -405,6 +590,163 @@ serve_file:
     cmp x0, #0
     beq set_mime_pdf
 
+    /* Additional MIME type checks */
+    mov x0, x19
+    ldr x1, =ext_htm
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_html
+
+    mov x0, x19
+    ldr x1, =ext_jpeg
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_jpg
+
+    mov x0, x19
+    ldr x1, =ext_mjs
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_js
+
+    mov x0, x19
+    ldr x1, =ext_gif
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_gif
+
+    mov x0, x19
+    ldr x1, =ext_webp
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_webp
+
+    mov x0, x19
+    ldr x1, =ext_avif
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_avif
+
+    mov x0, x19
+    ldr x1, =ext_bmp
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_bmp
+
+    mov x0, x19
+    ldr x1, =ext_mp4
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_mp4
+
+    mov x0, x19
+    ldr x1, =ext_webm
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_webm
+
+    mov x0, x19
+    ldr x1, =ext_mp3
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_mp3
+
+    mov x0, x19
+    ldr x1, =ext_wav
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_wav
+
+    mov x0, x19
+    ldr x1, =ext_ogg
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_ogg
+
+    mov x0, x19
+    ldr x1, =ext_flac
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_flac
+
+    mov x0, x19
+    ldr x1, =ext_woff
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_woff
+
+    mov x0, x19
+    ldr x1, =ext_woff2
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_woff2
+
+    mov x0, x19
+    ldr x1, =ext_ttf
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_ttf
+
+    mov x0, x19
+    ldr x1, =ext_otf
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_otf
+
+    mov x0, x19
+    ldr x1, =ext_wasm
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_wasm
+
+    mov x0, x19
+    ldr x1, =ext_zip
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_zip
+
+    mov x0, x19
+    ldr x1, =ext_gz
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_gzip
+
+    mov x0, x19
+    ldr x1, =ext_tar
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_tar
+
+    mov x0, x19
+    ldr x1, =ext_csv
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_csv
+
+    mov x0, x19
+    ldr x1, =ext_md
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_md
+
+    mov x0, x19
+    ldr x1, =ext_yaml
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_yaml
+
+    mov x0, x19
+    ldr x1, =ext_yml
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_yaml
+
+    mov x0, x19
+    ldr x1, =ext_map
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_map
+
     /* Default */
     b set_mime_bin
 
@@ -474,7 +816,101 @@ set_mime_bin:
     mov x26, #24
     b send_response
 
+set_mime_gif:
+    ldr x25, =mime_gif
+    ldr x26, =len_mime_gif
+    b send_response
+set_mime_webp:
+    ldr x25, =mime_webp
+    ldr x26, =len_mime_webp
+    b send_response
+set_mime_avif:
+    ldr x25, =mime_avif
+    ldr x26, =len_mime_avif
+    b send_response
+set_mime_bmp:
+    ldr x25, =mime_bmp
+    ldr x26, =len_mime_bmp
+    b send_response
+set_mime_mp4:
+    ldr x25, =mime_mp4
+    ldr x26, =len_mime_mp4
+    b send_response
+set_mime_webm:
+    ldr x25, =mime_webm
+    ldr x26, =len_mime_webm
+    b send_response
+set_mime_mp3:
+    ldr x25, =mime_mp3
+    ldr x26, =len_mime_mp3
+    b send_response
+set_mime_wav:
+    ldr x25, =mime_wav
+    ldr x26, =len_mime_wav
+    b send_response
+set_mime_ogg:
+    ldr x25, =mime_ogg
+    ldr x26, =len_mime_ogg
+    b send_response
+set_mime_flac:
+    ldr x25, =mime_flac
+    ldr x26, =len_mime_flac
+    b send_response
+set_mime_woff:
+    ldr x25, =mime_woff
+    ldr x26, =len_mime_woff
+    b send_response
+set_mime_woff2:
+    ldr x25, =mime_woff2
+    ldr x26, =len_mime_woff2
+    b send_response
+set_mime_ttf:
+    ldr x25, =mime_ttf
+    ldr x26, =len_mime_ttf
+    b send_response
+set_mime_otf:
+    ldr x25, =mime_otf
+    ldr x26, =len_mime_otf
+    b send_response
+set_mime_wasm:
+    ldr x25, =mime_wasm
+    ldr x26, =len_mime_wasm
+    b send_response
+set_mime_zip:
+    ldr x25, =mime_zip
+    ldr x26, =len_mime_zip
+    b send_response
+set_mime_gzip:
+    ldr x25, =mime_gzip
+    ldr x26, =len_mime_gzip
+    b send_response
+set_mime_tar:
+    ldr x25, =mime_tar
+    ldr x26, =len_mime_tar
+    b send_response
+set_mime_csv:
+    ldr x25, =mime_csv
+    ldr x26, =len_mime_csv
+    b send_response
+set_mime_md:
+    ldr x25, =mime_md
+    ldr x26, =len_mime_md
+    b send_response
+set_mime_yaml:
+    ldr x25, =mime_yaml
+    ldr x26, =len_mime_yaml
+    b send_response
+set_mime_map:
+    ldr x25, =mime_map
+    ldr x26, =len_mime_map
+    b send_response
+
 send_response:
+    /* Check if Range request */
+    ldr x0, =has_range
+    ldr w0, [x0]
+    cbnz w0, send_range_response
+    
     /* 1. Write HTTP header start (Status) */
     mov x0, x20
     ldr x1, =http_status_200
@@ -496,13 +932,24 @@ do_send_conn:
     mov x8, SYS_WRITE
     svc #0
     
-    /* 1.5 Write Server Header */
+    /* 1.5 Write Server Header (check server_tokens) */
+    ldr x0, =server_tokens_flag
+    ldr w0, [x0]
+    cbnz w0, send_server_full
+    mov x0, x20
+    ldr x1, =http_server_hdr_hidden
+    ldr x2, =len_server_hdr_hidden
+    mov x8, SYS_WRITE
+    svc #0
+    b send_etag_hdr
+send_server_full:
     mov x0, x20
     ldr x1, =http_server_hdr
     ldr x2, =len_server_hdr
     mov x8, SYS_WRITE
     svc #0
 
+send_etag_hdr:
     /* 1.55 Write ETag */
     mov x0, x20
     ldr x1, =http_etag_start
@@ -522,7 +969,36 @@ do_send_conn:
     mov x8, SYS_WRITE
     svc #0
 
-    /* 1.6 Write Content-Type Label */
+    /* 1.6 Write Accept-Ranges header */
+    mov x0, x20
+    ldr x1, =http_accept_ranges
+    ldr x2, =len_accept_ranges
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* 1.7 Write Cache-Control for static assets */
+    mov x0, x20
+    ldr x1, =http_cache_static
+    ldr x2, =len_cache_static
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* 1.8 Write Content-Encoding: gzip if serving gzipped file */
+    cmp x24, #1
+    bne skip_gzip_header
+    mov x0, x20
+    ldr x1, =http_content_encoding_gzip
+    ldr x2, =len_content_encoding_gzip
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x20
+    ldr x1, =http_vary
+    ldr x2, =len_vary
+    mov x8, SYS_WRITE
+    svc #0
+skip_gzip_header:
+
+    /* 1.9 Write Content-Type Label */
     mov x0, x20
     ldr x1, =http_content_type
     ldr x2, =len_content_type
@@ -559,6 +1035,11 @@ do_send_conn:
     mov x8, SYS_WRITE
     svc #0
     
+    /* Check HEAD method - skip body */
+    ldr x0, =is_head_request
+    ldr w0, [x0]
+    cbnz w0, head_response_done
+    
     /* 6. Send file content using sendfile (Loop) */
     ldr x0, =sendfile_offset
     str xzr, [x0]            /* offset = 0 */
@@ -594,6 +1075,254 @@ sendfile_done:
     
     cmp x28, #1
     beq hc_loop
+    b hc_close_final
+
+head_response_done:
+    /* Close file (no body sent) */
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+    
+    ldr x0, =current_status
+    mov w1, #200
+    str w1, [x0]
+    bl log_request
+    
+    cmp x28, #1
+    beq hc_loop
+    b hc_close_final
+
+/* Range request response (206 Partial Content) */
+send_range_response:
+    /* Calculate actual range */
+    ldr x0, =range_start
+    ldr x3, [x0]           /* range_start */
+    ldr x0, =range_end
+    ldr x4, [x0]           /* range_end */
+    
+    /* If range_end is 0 or > file_size, set to file_size - 1 */
+    cmp x4, #0
+    beq range_end_default
+    cmp x4, x22
+    blt range_end_ok
+range_end_default:
+    sub x4, x22, #1
+range_end_ok:
+    
+    /* Validate range */
+    cmp x3, x22
+    bge send_416            /* Range not satisfiable */
+    
+    /* Calculate content length for range */
+    sub x5, x4, x3
+    add x5, x5, #1         /* range_len = end - start + 1 */
+    
+    /* 1. Status 206 */
+    mov x0, x20
+    ldr x1, =http_status_206
+    ldr x2, =len_status_206
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Connection header */
+    cmp x28, #1
+    beq range_send_ka
+    ldr x1, =http_conn_close_hdr
+    ldr x2, =len_conn_close_hdr
+    b range_do_conn
+range_send_ka:
+    ldr x1, =http_conn_ka
+    ldr x2, =len_conn_ka
+range_do_conn:
+    mov x0, x20
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Server header */
+    mov x0, x20
+    ldr x1, =http_server_hdr
+    ldr x2, =len_server_hdr
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Content-Type */
+    mov x0, x20
+    ldr x1, =http_content_type
+    ldr x2, =len_content_type
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x20
+    mov x1, x25
+    mov x2, x26
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Accept-Ranges */
+    mov x0, x20
+    ldr x1, =http_accept_ranges
+    ldr x2, =len_accept_ranges
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Content-Range: bytes start-end/total */
+    mov x0, x20
+    ldr x1, =http_content_range_start
+    ldr x2, =len_content_range_start
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write start */
+    /* Save range values on stack */
+    stp x3, x4, [sp, #-32]!
+    str x5, [sp, #16]
+    
+    mov x0, x3
+    ldr x1, =range_buffer
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =range_buffer
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write '-' */
+    mov w0, #'-'
+    strb w0, [sp, #24]
+    mov x0, x20
+    add x1, sp, #24
+    mov x2, #1
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write end */
+    ldr x4, [sp, #8]
+    mov x0, x4
+    ldr x1, =range_buffer
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =range_buffer
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write '/' */
+    mov w0, #'/'
+    strb w0, [sp, #24]
+    mov x0, x20
+    add x1, sp, #24
+    mov x2, #1
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write total */
+    mov x0, x22
+    ldr x1, =range_buffer
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =range_buffer
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Write \r\n */
+    mov x0, x20
+    ldr x1, =http_end
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Content-Length of range */
+    ldr x5, [sp, #16]
+    mov x0, x20
+    ldr x1, =http_content_len
+    mov x2, #18
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x5
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Header end */
+    mov x0, x20
+    ldr x1, =http_end
+    mov x2, #4
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Restore range values */
+    ldr x5, [sp, #16]
+    ldp x3, x4, [sp], #32
+    
+    /* Check HEAD - skip body */
+    ldr x0, =is_head_request
+    ldr w0, [x0]
+    cbnz w0, range_head_done
+    
+    /* Send file content from range_start with range_len */
+    ldr x0, =sendfile_offset
+    str x3, [x0]            /* offset = range_start */
+
+range_sendfile_loop:
+    cmp x5, #0
+    ble range_sendfile_done
+
+    mov x0, x20              /* out fd */
+    mov x1, x21              /* in fd */
+    ldr x2, =sendfile_offset
+    mov x3, x5               /* count = remaining range */
+    mov x8, SYS_SENDFILE
+    svc #0
+    
+    cmp x0, #0
+    ble range_sendfile_done
+    
+    sub x5, x5, x0
+    b range_sendfile_loop
+
+range_sendfile_done:
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+    
+    ldr x0, =current_status
+    mov w1, #206
+    str w1, [x0]
+    bl log_request
+    
+    cmp x28, #1
+    beq hc_loop
+    b hc_close_final
+
+range_head_done:
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+    ldr x0, =current_status
+    mov w1, #206
+    str w1, [x0]
+    bl log_request
+    cmp x28, #1
+    beq hc_loop
+    b hc_close_final
+
+send_416:
+    /* 416 Range Not Satisfiable */
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+    mov x0, x20
+    ldr x1, =http_416
+    ldr x2, =len_416
+    mov x8, SYS_WRITE
+    svc #0
+    ldr x0, =current_status
+    mov w1, #416
+    str w1, [x0]
+    bl log_request
     b hc_close_final
 
 send_304:
@@ -836,3 +1565,61 @@ ct_ok:
 ct_fail:
     mov x0, #-1
     ret
+
+/* parse_range_header(ptr after "Range: bytes=") */
+/* Parses "start-end" or "start-" format */
+parse_range_header:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    mov x19, x0
+    
+    /* Parse start number */
+    bl atoi
+    ldr x1, =range_start
+    str x0, [x1]
+    
+    /* Find '-' */
+    mov x1, x19
+prh_find_dash:
+    ldrb w2, [x1]
+    cbz w2, prh_no_end
+    cmp w2, #'-'
+    beq prh_found_dash
+    add x1, x1, #1
+    b prh_find_dash
+prh_found_dash:
+    add x0, x1, #1         /* After '-' */
+    ldrb w2, [x0]
+    cmp w2, #13             /* \r */
+    beq prh_no_end
+    cmp w2, #10             /* \n */
+    beq prh_no_end
+    cmp w2, #0
+    beq prh_no_end
+    
+    /* Parse end number */
+    bl atoi
+    ldr x1, =range_end
+    str x0, [x1]
+    b prh_set_flag
+    
+prh_no_end:
+    ldr x1, =range_end
+    str xzr, [x1]          /* 0 = until end of file */
+    
+prh_set_flag:
+    ldr x0, =has_range
+    mov w1, #1
+    str w1, [x0]
+    
+    ldp x29, x30, [sp], #16
+    ret
+
+.data
+    str_accept_enc: .asciz "Accept-Encoding:"
+    .global str_accept_enc
+    
+    http_416:
+        .ascii "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    len_416 = . - http_416
+    .global http_416, len_416
