@@ -48,7 +48,9 @@
         .byte 10
         .ascii "    High-performance, industrial-grade HTTP/1.1 web server written in"
         .byte 10
-        .ascii "    pure AArch64 Assembly."
+        .ascii "    pure AArch64 Assembly. Supports static files, reverse proxy,"
+        .byte 10
+        .ascii "    directory listing, gzip_static, Range requests, CGI, and more."
         .byte 10, 10
         .ascii "\x1b[1mOPTIONS:\x1b[0m"
         .byte 10
@@ -62,7 +64,35 @@
         .byte 10
         .ascii "    \x1b[33m-x, --proxy\x1b[0m          Enable reverse proxy"
         .byte 10
+        .ascii "    \x1b[33m--daemon\x1b[0m             Run as background daemon"
+        .byte 10
+        .ascii "    \x1b[33m-v, --version\x1b[0m        Print version and exit"
+        .byte 10
         .ascii "    \x1b[33m-h, --help\x1b[0m           Print this help message"
+        .byte 10, 10
+        .ascii "\x1b[1mCONFIG DIRECTIVES:\x1b[0m"
+        .byte 10
+        .ascii "    port=<number>              Server port"
+        .byte 10
+        .ascii "    root=<path>                Document root"
+        .byte 10
+        .ascii "    worker_processes=<N>       Worker count (1-128, default: 4)"
+        .byte 10
+        .ascii "    keepalive_timeout=<sec>    Keep-alive timeout (default: 65)"
+        .byte 10
+        .ascii "    client_max_body_size=<N>   Max request body in bytes"
+        .byte 10
+        .ascii "    server_tokens=on|off       Show server version"
+        .byte 10
+        .ascii "    autoindex=on|off           Directory listing"
+        .byte 10
+        .ascii "    gzip_static=on|off         Serve .gz files"
+        .byte 10
+        .ascii "    access_log=<path>          Access log file"
+        .byte 10
+        .ascii "    upstream_ip=<ip>           Proxy upstream IP"
+        .byte 10
+        .ascii "    upstream_port=<port>       Proxy upstream port"
         .byte 10, 10
     len_txt_help_en = . - txt_help_en
 
@@ -90,6 +120,8 @@
         .ascii "    基于纯 AArch64 汇编编写的工业级高性能 HTTP/1.1 Web 服务器。"
         .byte 10
         .ascii "    特性：Prefork 多进程、Epoll 事件驱动、零拷贝传输 (Zero-Copy)。"
+        .byte 10
+        .ascii "    支持：静态文件、反向代理、目录列表、gzip_static、Range、CGI。"
         .byte 10, 10
         .ascii "\x1b[1m选项:\x1b[0m"
         .byte 10
@@ -103,7 +135,35 @@
         .byte 10
         .ascii "    \x1b[33m-x, --proxy\x1b[0m          启用反向代理模式"
         .byte 10
+        .ascii "    \x1b[33m--daemon\x1b[0m             后台守护进程模式"
+        .byte 10
+        .ascii "    \x1b[33m-v, --version\x1b[0m        显示版本号"
+        .byte 10
         .ascii "    \x1b[33m-h, --help\x1b[0m           打印此帮助信息"
+        .byte 10, 10
+        .ascii "\x1b[1m配置指令:\x1b[0m"
+        .byte 10
+        .ascii "    port=<数字>                服务端口"
+        .byte 10
+        .ascii "    root=<路径>                文档根目录"
+        .byte 10
+        .ascii "    worker_processes=<N>       工作进程数 (1-128, 默认: 4)"
+        .byte 10
+        .ascii "    keepalive_timeout=<秒>     保活超时 (默认: 65)"
+        .byte 10
+        .ascii "    client_max_body_size=<N>   最大请求体大小 (字节)"
+        .byte 10
+        .ascii "    server_tokens=on|off       显示服务器版本"
+        .byte 10
+        .ascii "    autoindex=on|off           目录列表"
+        .byte 10
+        .ascii "    gzip_static=on|off         预压缩文件服务"
+        .byte 10
+        .ascii "    access_log=<路径>          访问日志路径"
+        .byte 10
+        .ascii "    upstream_ip=<IP>           代理上游 IP"
+        .byte 10
+        .ascii "    upstream_port=<端口>       代理上游端口"
         .byte 10, 10
     len_txt_help_zh = . - txt_help_zh
 

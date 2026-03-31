@@ -1,27 +1,59 @@
-# AArch64 Assembly HTTP Server
+# ANX Web Server
 
-A high-performance, concurrent web server written entirely in AArch64 Assembly for Linux. No C library (libc), no external dependencies. Just raw syscalls.
+A high-performance, industrial-grade HTTP/1.1 web server written entirely in **AArch64 Assembly** for Linux. No C library (libc), no external dependencies — just raw syscalls and pure assembly.
 
 ## Features
 
-- **Pure Assembly**: Written in GNU Assembler (GAS) for AArch64.
-- **Concurrent**: Uses `fork` (via `clone` syscall) to handle multiple clients simultaneously.
-- **Zero-Copy Serving**: Uses `sendfile` syscall for high-performance static file delivery.
-- **MIME Support**: Automatically detects and sets Content-Type for `.html`, `.css`, `.js`, `.png`, `.jpg`.
-- **Directory Listing**: Auto-generates HTML indexes for directories.
-- **Reverse Proxy**: Can forward requests to an upstream backend (IP-based).
-- **Configuration**: Supports CLI flags and a configuration file.
+### Core
+- **Pure AArch64 Assembly**: Written in GNU Assembler (GAS), zero C code
+- **No Dependencies**: No libc, no external libraries — 100% self-contained
+- **Prefork + Epoll**: Multi-process architecture with epoll event loop
+- **Zero-Copy**: Uses `sendfile` syscall for high-performance file delivery
+- **Static Linking**: Single binary, no shared library dependencies
 
-## Architecture
+### HTTP Features
+- **HTTP/1.1** with Keep-Alive support
+- **HEAD Method** support (headers only, no body)
+- **Range Requests** (HTTP 206 Partial Content) for resumable downloads
+- **ETag / If-None-Match** conditional requests (304 Not Modified)
+- **Cache-Control** headers for static assets
+- **Accept-Ranges** header advertisement
+- **40+ MIME Types** auto-detected by extension (html, css, js, json, png, jpg, gif, webp, avif, mp4, webm, mp3, woff2, wasm, zip, and more)
+- **Directory Listing** with sortable columns (toggleable via `autoindex`)
+- **Health Check** endpoint (`/health` returns JSON)
 
-- **`src/main.s`**: Entry point, argument parsing.
-- **`src/network.s`**: Socket creation, binding, listening, and connection handling.
-- **`src/http.s`**: HTTP request parsing, response generation, proxy logic.
-- **`src/utils.s`**: String manipulation, integer conversion, memory helpers.
-- **`src/config.s`**: Config file parser.
-- **`src/data.s`**: Global constants and buffers.
+### Server Features
+- **Configurable Workers** (1-128 processes, default 4)
+- **Reverse Proxy** with X-Forwarded-For and X-Real-IP injection
+- **gzip_static** support (serve pre-compressed `.gz` files)
+- **CGI** support for Python scripts
+- **Daemon Mode** (background execution with PID file)
+- **Graceful Shutdown** (SIGINT/SIGTERM handling with PID cleanup)
+- **Access Logging** to stdout or file
+- **Silent Mode** for maximum performance
+- **Configurable Timeouts** (keepalive, send, receive)
+- **Server Tokens** toggle (hide/show version in headers)
+- **Internationalization** (English/Chinese auto-detection)
 
-## Usage
+### Networking
+- **SO_REUSEPORT** for multi-worker socket sharing
+- **SO_REUSEADDR** for fast restart
+- **TCP_DEFER_ACCEPT** to reduce unnecessary wake-ups
+- **TCP_NODELAY** for low-latency responses
+- **EPOLLEXCLUSIVE** for thundering herd prevention
+
+### Security
+- **Path Traversal Prevention** (`..` detection)
+- **IP-based Access Control** (allow/deny lists)
+- **Client Body Size Limits** (configurable)
+- **SIGPIPE** handling
+
+### Protocol Frameworks (In Development)
+- **HTTP/2** connection management, stream state machine, HPACK
+- **WebSocket** RFC 6455 handshake with SHA-1 + Base64
+- **io_uring** async I/O framework
+
+## Quick Start
 
 ### Build
 ```bash
@@ -30,50 +62,147 @@ make
 
 ### Run
 ```bash
-# Start on default port 8080 serving ./www
-./build/anx_asm_demo
+# Serve current directory on port 8080
+./build/anx
 
-# Start on port 8099 serving /var/www
-./build/anx_asm_demo -p 8099 -d /var/www
+# Custom port and directory
+./build/anx -p 9000 -d /var/www/html
 
-# Start with Config File
-./build/anx_asm_demo -c configs/anx.conf
+# With configuration file
+./build/anx -c configs/anx.conf
+
+# Reverse proxy mode
+./build/anx -x
+
+# Background daemon
+./build/anx --daemon -p 80 -d /var/www
 ```
 
-### Reverse Proxy Mode
-To enable the reverse proxy (forwarding to `127.0.0.1:9005`):
+### Test
 ```bash
-./build/anx_asm_demo -x
+make test
 ```
-Useful for forwarding requests to an application server (e.g., Python, Node.js).
 
-## Configuration File (`anx.conf`)
+## Configuration
+
+Configuration file format (key=value):
+
 ```ini
+# Server Basics
 port=8080
 root=./www
+
+# Worker Configuration
+worker_processes=4
+
+# Timeouts
+keepalive_timeout=65
+
+# Request Limits
+client_max_body_size=1048576
+
+# Server Identity
+server_tokens=on
+
+# Directory Listing
+autoindex=on
+
+# Compression
+gzip_static=off
+
+# Logging
+access_log=/var/log/anx/access.log
+
+# Reverse Proxy
+upstream_ip=127.0.0.1
+upstream_port=9005
+```
+
+## CLI Options
+
+| Flag | Description |
+|------|-------------|
+| `-p, --port <port>` | Listen port (default: 8080) |
+| `-d, --dir <path>` | Document root |
+| `-c, --config <file>` | Configuration file |
+| `-x, --proxy` | Enable reverse proxy |
+| `-s, --silent` | Disable access logging |
+| `--daemon` | Run as background daemon |
+| `-v, --version` | Print version |
+| `-h, --help` | Print help |
+
+## Architecture
+
+```
+src/
+├── main.s                    # Entry point, CLI parsing, signal handling
+├── network.s                 # TCP socket, epoll, worker processes
+├── http.s                    # HTTP/1.1 request/response, proxy, Range
+├── utils.s                   # String/integer utilities, logging
+├── config.s                  # Configuration file parser (18 directives)
+├── data.s                    # Global buffers, constants, MIME types
+├── listing.s                 # Directory listing HTML generation
+├── error.s                   # HTTP error page generation
+├── cgi.s                     # CGI script execution
+├── i18n.s                    # Internationalization (EN/ZH)
+├── defs.s                    # Syscall numbers and constants
+├── core/
+│   ├── memory.s              # Memory pool (mmap)
+│   ├── simd.s                # NEON SIMD optimizations
+│   ├── types.s               # Type definitions
+│   └── version.s             # Auto-generated version info
+├── io/
+│   ├── engine.s              # I/O engine abstraction
+│   └── uring.s               # io_uring implementation
+├── crypto/
+│   ├── sha1.s                # SHA-1 hash (RFC 3174)
+│   └── base64.s              # Base64 encode/decode + NEON
+├── protocol/
+│   ├── http2/                # HTTP/2 framework
+│   └── websocket/            # WebSocket framework
+└── security/
+    ├── acl.s                 # IP access control lists
+    └── redirect.s            # URL redirect rules
 ```
 
 ## Syscalls Used
-- `socket`, `bind`, `listen`, `accept`, `connect`
-- `read`, `write`, `openat`, `close`
-- `sendfile`
-- `clone` (fork), `wait4` (via signal handling)
-- `getdents64`
-- `exit`
+
+`socket`, `bind`, `listen`, `accept4`, `connect`, `setsockopt`, `getpeername`,
+`read`, `write`, `writev`, `sendfile`, `openat`, `close`, `lseek`, `newfstatat`,
+`getdents64`, `epoll_create1`, `epoll_ctl`, `epoll_wait`, `clone`, `wait4`,
+`execve`, `pipe2`, `dup3`, `fcntl`, `rt_sigaction`, `clock_gettime`, `getpid`,
+`setsid`, `unlinkat`, `exit`
 
 ## License
 MIT
 
 ## Version History
 
-### v0.3.0-dev (Current)
+### v0.4.0-dev (Current)
+**Major Feature Release**
+
+- 30+ new MIME types (40+ total)
+- HEAD method support
+- HTTP Range requests (206 Partial Content)
+- gzip_static support
+- Cache-Control and Accept-Ranges headers
+- Configurable worker processes (1-128)
+- 18 configuration directives
+- X-Forwarded-For / X-Real-IP proxy headers
+- SO_REUSEPORT, TCP_NODELAY networking
+- Server tokens toggle
+- Autoindex toggle
+- IP access control lists
+- URL redirect module
+- Enhanced help text (EN/ZH)
+- 35 automated tests
+
+### v0.3.0-dev
 **WebSocket Handshake + SHA1 + Base64**
 
 - SHA-1 hash algorithm (RFC 3174) - 80 rounds, pure assembly
 - Base64 encoding/decoding (RFC 4648) - scalar + NEON
 - Complete WebSocket handshake (RFC 6455)
-  - Sec-WebSocket-Key extraction
-  - Accept key generation: BASE64(SHA1(key + magic))
 - ~9,000 lines of pure AArch64 assembly
 
 ### v0.2.0-beta
@@ -81,10 +210,8 @@ MIT
 
 - HTTP/2 connection management (RFC 7540)
 - Stream state machine with 1000 concurrent streams  
-- Flow control (connection + stream level)
 - SIMD memory operations: 30-60 GB/s throughput
 - io_uring framework for async I/O
-- ~8,000 lines of pure AArch64 assembly
 
 ### v0.1.0-alpha
 **Architecture Refactor**
@@ -92,11 +219,6 @@ MIT
 - Modular architecture (core/, io/, protocol/)
 - Memory pool management
 - I/O engine abstraction  
-- WebSocket frame handling
-- ~6,250 lines of assembly
-
-### v0.0.x (Original)
-Initial HTTP/1.1 server implementation
 
 ---
 
