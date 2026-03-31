@@ -94,11 +94,78 @@ hc_loop:
     mov x28, #0             /* Found Connection: close -> disable KA */
 
 check_trav:
+    /* 2.6 Detect Accept-Encoding: gzip */
+    ldr x0, =req_buffer
+    ldr x1, =str_accept_gzip
+    bl strstr
+    ldr x1, =client_accepts_gzip
+    cmp x0, #0
+    beq no_gzip_accept
+    mov w2, #1
+    str w2, [x1]
+    b check_trav_real
+no_gzip_accept:
+    str wzr, [x1]
+
+check_trav_real:
     /* 3. Security: Check Directory Traversal */
     ldr x0, =req_path
     bl check_traversal
     cmp x0, #0
     bne send_403
+    
+    /* 3.5 IP Access Control */
+    ldr x0, =client_ip_str
+    bl inet_aton             /* Convert IP string to network order */
+    bl check_ip_access
+    cbz x0, send_403        /* 0 = denied */
+    
+    /* 3.6 Rate Limiting */
+    ldr x0, =client_ip_str
+    bl inet_aton
+    bl check_rate_limit
+    cbz x0, send_429        /* 0 = rate limited */
+    
+    /* 3.7 Location Routing */
+    ldr x0, =req_path
+    bl match_location
+    ldr x1, =matched_location
+    str x0, [x1]            /* Save matched location (0 = none) */
+    cbz x0, no_location_match
+    
+    /* Check if location has root override */
+    ldr x1, [x1]
+    add x2, x1, #64         /* LOC_ROOT_OFF */
+    ldrb w3, [x2]
+    cbz w3, loc_check_proxy /* No root override */
+    
+    /* Use location's root instead of server_root */
+    ldr x0, =path_buffer
+    mov x1, x2              /* location root */
+    bl strcpy
+    ldr x0, =path_buffer
+    ldr x1, =req_path
+    bl strcat
+    b resolve_path
+    
+loc_check_proxy:
+    /* Check if location has proxy_pass */
+    ldr x1, =matched_location
+    ldr x1, [x1]
+    ldr w0, [x1, #320]      /* LOC_PROXY_IP_OFF */
+    cbz w0, no_location_match
+    
+    /* Set upstream for this request */
+    ldr x1, =upstream_ip
+    str w0, [x1]
+    ldr x1, =matched_location
+    ldr x1, [x1]
+    ldrh w0, [x1, #324]     /* LOC_PROXY_PORT_OFF */
+    ldr x1, =upstream_port
+    strh w0, [x1]
+    b handle_proxy
+
+no_location_match:
 
     /* 4. Resolve Path */
     /* Construct full path: server_root + req_path */
@@ -112,6 +179,9 @@ check_trav:
     ldr x1, =req_path       /* src */
     bl strcat
 
+resolve_path:
+    ldr x27, =path_buffer
+
     /* 5. Stat File */
     mov x0, AT_FDCWD
     mov x1, x27             /* path_buffer */
@@ -121,7 +191,7 @@ check_trav:
     svc #0
 
     cmp x0, #0
-    blt send_404
+    blt try_files_fallback   /* Not found -> try alternatives */
 
     /* 6. Check File Type */
     ldr x1, =stat_buffer
@@ -139,6 +209,47 @@ check_trav:
     beq handle_file_load_size
     
     b send_403
+
+/* ------------------------------------------------------------------------- */
+/* try_files: Try $uri, $uri/index.html, then 404                           */
+/* ------------------------------------------------------------------------- */
+try_files_fallback:
+    /* Try 1: $uri/index.html (common SPA/directory pattern) */
+    ldr x0, =path_buffer
+    ldr x1, =index_file       /* "/index.html" */
+    bl strcat
+    
+    mov x0, AT_FDCWD
+    ldr x1, =path_buffer
+    ldr x2, =stat_buffer
+    mov x3, #0
+    mov x8, SYS_NEWFSTATAT
+    svc #0
+    cmp x0, #0
+    bge handle_file_load_size  /* Found $uri/index.html */
+    
+    /* Try 2: Restore original path and try $uri.html */
+    ldr x0, =path_buffer
+    ldr x1, =server_root
+    bl strcpy
+    ldr x0, =path_buffer
+    ldr x1, =req_path
+    bl strcat
+    ldr x0, =path_buffer
+    ldr x1, =ext_html_suffix
+    bl strcat
+    
+    mov x0, AT_FDCWD
+    ldr x1, =path_buffer
+    ldr x2, =stat_buffer
+    mov x3, #0
+    mov x8, SYS_NEWFSTATAT
+    svc #0
+    cmp x0, #0
+    bge handle_file_load_size  /* Found $uri.html */
+    
+    /* Nothing found -> 404 */
+    b send_404
 
 /* ------------------------------------------------------------------------- */
 /* Proxy Handling */
@@ -312,6 +423,67 @@ handle_dir:
 /* Serve File Logic */
 /* ------------------------------------------------------------------------- */
 serve_file:
+    /* Check gzip_static: if client accepts gzip, try file.gz */
+    ldr x0, =client_accepts_gzip
+    ldr w0, [x0]
+    cbz w0, serve_file_direct
+    
+    /* Build path.gz */
+    ldr x0, =gzip_path_buf
+    ldr x1, =path_buffer
+    bl strcpy
+    ldr x0, =gzip_path_buf
+    ldr x1, =ext_gz_suffix
+    bl strcat
+    
+    /* Try to stat path.gz */
+    mov x0, AT_FDCWD
+    ldr x1, =gzip_path_buf
+    ldr x2, =stat_buffer
+    mov x3, #0
+    mov x8, SYS_NEWFSTATAT
+    svc #0
+    cmp x0, #0
+    bne serve_file_direct    /* .gz doesn't exist, serve normal */
+    
+    /* .gz exists! Open it instead */
+    mov x0, AT_FDCWD
+    ldr x1, =gzip_path_buf
+    mov x2, O_RDONLY
+    mov x3, #0
+    mov x8, SYS_OPENAT
+    svc #0
+    cmp x0, #0
+    blt serve_file_direct    /* Can't open .gz, fall through to normal */
+    mov x21, x0             /* x21 = file_fd (gzipped version) */
+    
+    /* Get .gz file size */
+    ldr x0, =stat_buffer
+    ldr x22, [x0, #48]     /* st_size of .gz file */
+    
+    /* Set gzip flag */
+    ldr x0, =serving_gzip
+    mov w1, #1
+    str w1, [x0]
+    
+    /* Still need MIME detection from original path */
+    ldr x0, =path_buffer
+    bl get_extension
+    mov x19, x0
+    cmp x19, #0
+    beq set_mime_bin_gz
+    b serve_file_mime
+    
+set_mime_bin_gz:
+    ldr x25, =mime_bin
+    mov x26, #24
+    b send_response_gzip
+
+serve_file_direct:
+    /* Clear gzip flag */
+    ldr x0, =serving_gzip
+    str wzr, [x0]
+    
     /* Open File */
     mov x0, AT_FDCWD
     ldr x1, =path_buffer
@@ -332,6 +504,7 @@ serve_file:
     cmp x19, #0
     beq set_mime_bin
 
+serve_file_mime:
     /* Compare Extensions - full MIME type detection */
     mov x0, x19
     ldr x1, =ext_html
@@ -652,6 +825,11 @@ set_mime_bin:
     b send_response
 
 send_response:
+    /* Check if we're serving a gzip_static file */
+    ldr x0, =serving_gzip
+    ldr w0, [x0]
+    cbnz w0, send_response_gzip
+    
     /* 1. Write HTTP header start (Status) */
     mov x0, x20
     ldr x1, =http_status_200
@@ -799,6 +977,138 @@ sendfile_done:
     beq hc_loop
     b hc_close_final
 
+/* =========================================================================
+ * send_response_gzip - Send response with Content-Encoding: gzip
+ * Uses same register conventions as send_response:
+ *   x20 = client_fd, x21 = file_fd, x22 = file_size
+ *   x25 = mime ptr, x26 = mime len, x27 = etag len, x28 = keep-alive
+ * ========================================================================= */
+send_response_gzip:
+    /* Status line */
+    mov x0, x20
+    ldr x1, =http_status_200
+    ldr x2, =len_status_200
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Connection header */
+    cmp x28, #1
+    beq srg_ka
+    ldr x1, =http_conn_close_hdr
+    ldr x2, =len_conn_close_hdr
+    b srg_conn
+srg_ka:
+    ldr x1, =http_conn_ka
+    ldr x2, =len_conn_ka
+srg_conn:
+    mov x0, x20
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Server header */
+    mov x0, x20
+    ldr x1, =http_server_hdr
+    ldr x2, =len_server_hdr
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Date header */
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl get_http_date
+    ldp x29, x30, [sp], #16
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =http_date_buffer
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Content-Type */
+    mov x0, x20
+    ldr x1, =http_content_type
+    ldr x2, =len_content_type
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x20
+    mov x1, x25
+    mov x2, x26
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Content-Encoding: gzip */
+    mov x0, x20
+    ldr x1, =http_content_encoding_gzip
+    ldr x2, =len_content_encoding_gzip
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Content-Length */
+    mov x0, x20
+    ldr x1, =http_content_len
+    mov x2, #18
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x22
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Vary: Accept-Encoding (important for caching) */
+    mov x0, x20
+    ldr x1, =http_vary_encoding
+    ldr x2, =len_vary_encoding
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* End headers */
+    mov x0, x20
+    ldr x1, =http_end
+    mov x2, #4
+    mov x8, SYS_WRITE
+    svc #0
+    
+    /* Check HEAD */
+    ldr x0, =current_method
+    ldr w0, [x0]
+    cmp w0, #METHOD_HEAD
+    beq srg_done
+    
+    /* Sendfile loop */
+    ldr x0, =sendfile_offset
+    str xzr, [x0]
+srg_send:
+    cmp x22, #0
+    ble srg_done
+    mov x0, x20
+    mov x1, x21
+    ldr x2, =sendfile_offset
+    mov x3, x22
+    mov x8, SYS_SENDFILE
+    svc #0
+    cmp x0, #0
+    ble srg_done
+    sub x22, x22, x0
+    b srg_send
+
+srg_done:
+    /* Close file */
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+    
+    /* Log 200 */
+    ldr x0, =current_status
+    mov w1, #200
+    str w1, [x0]
+    bl log_request
+    
+    cmp x28, #1
+    beq hc_loop
+    b hc_close_final
+
 send_304:
     mov x0, x20
     ldr x1, =http_304
@@ -914,6 +1224,19 @@ send_405:
     
     ldr x0, =current_status
     mov w1, #405
+    str w1, [x0]
+    bl log_request
+    b hc_close_final
+
+send_429:
+    mov x0, x20
+    ldr x1, =http_429
+    ldr x2, =len_429
+    mov x8, SYS_WRITE
+    svc #0
+    
+    ldr x0, =current_status
+    mov w1, #429
     str w1, [x0]
     bl log_request
     b hc_close_final

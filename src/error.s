@@ -199,6 +199,7 @@ caj_done:
 /* ------------------------------------------------------------------------- */
 escape_html_string:
     mov x2, x0             /* dest */
+    mov x5, x0             /* save original dest */
     mov x3, x1             /* src */
 
 ehs_loop:
@@ -239,8 +240,7 @@ ehs_ent_loop:
 
 ehs_done:
     strb wzr, [x2]
-    mov x0, x3
-    sub x0, x0, x1
+    sub x0, x2, x5
     ret
 
 .align 2
@@ -254,6 +254,7 @@ html_gt:  .asciz "&gt;"
 /* ------------------------------------------------------------------------- */
 escape_json_string:
     mov x2, x0             /* dest */
+    mov x5, x0             /* save original dest */
     mov x3, x1             /* src */
 
 ejs_loop:
@@ -294,8 +295,7 @@ ejs_newline:
 
 ejs_done:
     strb wzr, [x2]
-    mov x0, x3
-    sub x0, x0, x1
+    sub x0, x2, x5
     ret
 
 /* ------------------------------------------------------------------------- */
@@ -423,16 +423,17 @@ fet_found_year:
     ret
 
 append_2dig:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    mov x6, #0              /* x6 = extra bytes (0 or 1 for '0' prefix) */
     cmp x0, #10
     bge ad_ok
     mov w2, #'0'
     strb w2, [x1], #1
+    mov x6, #1
 ad_ok:
-    stp x29, x30, [sp, #-16]!
-    mov x3, x1
-    mov x1, x3
-    bl itoa
-    add x0, x3, x0
+    bl itoa                 /* itoa(value, buf) -> x0 = digit count */
+    add x0, x0, x6          /* total bytes = digits + extra */
     ldp x29, x30, [sp], #16
     ret
 
@@ -503,6 +504,8 @@ build_error_response:
     mov x1, x0
     mov x0, x24
     bl strcpy
+    mov x0, x24
+    bl strlen
     add x24, x24, x0
     
     /* Part 7: <hr><p><strong>URL:</strong> */
@@ -765,10 +768,11 @@ sep_type_done:
 /* send_error_json - Direct JSON error response */
 /* ------------------------------------------------------------------------- */
 send_error_json:
-    stp x29, x30, [sp, #-48]!
+    stp x29, x30, [sp, #-64]!
     mov x29, sp
     stp x19, x20, [sp, #16]
     stp x21, x22, [sp, #32]
+    str x23, [sp, #48]
     
     mov x19, x0             /* client_fd */
     mov x20, x1             /* error_code */
@@ -776,45 +780,56 @@ send_error_json:
     
     /* Build JSON */
     ldr x22, =error_response_buffer
+    mov x23, x22            /* x23 = current pos */
     
-    mov x0, x22
+    /* {"error":{"code": */
+    mov x0, x23
     ldr x1, =error_json_start
     ldr x2, =len_error_json_start
     bl memcpy
+    add x23, x23, x2
     
-    mov x0, x22
+    /* Code value */
+    mov x0, x23
     mov x1, x20
     bl itoa
-    mov x0, x22
-    bl strcat
+    add x23, x23, x0
     
-    mov x0, x22
+    /* ,"message":" */
+    mov x0, x23
     ldr x1, =error_json_msg_start
-    bl strcat
+    ldr x2, =len_error_json_msg_start
+    bl memcpy
+    add x23, x23, x2
     
-    mov x0, x22
+    /* Message value */
+    mov x0, x23
     mov x1, x21
     bl escape_json_string
-    mov x0, x22
-    bl strcat
+    add x23, x23, x0
     
-    mov x0, x22
+    /* ","timestamp":" */
+    mov x0, x23
     ldr x1, =error_json_time_start
-    bl strcat
+    ldr x2, =len_error_json_time_start
+    bl memcpy
+    add x23, x23, x2
     
-    mov x0, x22
+    /* Timestamp */
+    mov x0, x23
     bl format_error_timestamp
-    mov x0, x22
-    bl strcat
+    add x23, x23, x0
     
-    mov x0, x22
+    /* "}} */
+    mov x0, x23
     ldr x1, =error_json_end
-    bl strcat
+    ldr x2, =len_error_json_end
+    bl memcpy
+    add x23, x23, x2
     
     /* Get length */
-    mov x0, x22
-    bl strlen
-    mov x24, x0
+    ldr x0, =error_response_buffer
+    sub x24, x23, x0
     
     /* Send status */
     cmp x20, #500; beq sej_500
@@ -851,9 +866,10 @@ sej_send:
     mov x8, SYS_WRITE
     svc #0
     
+    ldr x23, [sp, #48]
     ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #48
+    ldp x29, x30, [sp], #64
     ret
 
 .bss

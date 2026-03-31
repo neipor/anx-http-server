@@ -33,6 +33,7 @@
 .equ SYS_ACCEPT4, 242
 .equ SYS_SETSOCKOPT, 208
 .equ SYS_CLONE, 220
+.equ SYS_FORK, 107
 .equ SYS_WAIT4, 260
 
 /* Fcntl */
@@ -90,6 +91,7 @@
 .equ SIGPIPE, 13
 .equ SIG_IGN, 1
 .equ EINTR, 4
+.equ EAGAIN, 11
 
 /* Clone Flags */
 .equ SIGCHLD_FLAG, 17     /* Exit signal for clone */

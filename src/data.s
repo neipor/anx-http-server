@@ -278,6 +278,24 @@
     len_http_end_val: .word 4
     str_http_end:   .asciz "\r\n\r\n"
     .global str_http_end
+    
+    /* Gzip headers */
+    http_content_encoding_gzip: .ascii "\r\nContent-Encoding: gzip"
+    len_content_encoding_gzip = . - http_content_encoding_gzip
+    .global http_content_encoding_gzip, len_content_encoding_gzip
+    
+    http_vary_encoding: .ascii "\r\nVary: Accept-Encoding"
+    len_vary_encoding = . - http_vary_encoding
+    .global http_vary_encoding, len_vary_encoding
+    
+    str_accept_gzip: .asciz "gzip"
+    .global str_accept_gzip
+    
+    ext_gz_suffix: .asciz ".gz"
+    .global ext_gz_suffix
+    
+    ext_html_suffix: .asciz ".html"
+    .global ext_html_suffix
 
     /* 400 Bad Request */
     http_400:
@@ -330,8 +348,16 @@
     len_405 = . - http_405
     .global http_405, len_405
 
+    /* 429 Too Many Requests */
+    http_429:
+        .ascii "HTTP/1.1 429 Too Many Requests\r\n"
+        .ascii "Content-Type: text/html\r\nConnection: close\r\nRetry-After: 1\r\nContent-Length: 367\r\n\r\n"
+        .ascii "<!DOCTYPE html><html><head><title>429 Too Many Requests</title><style>body{font-family:system-ui,sans-serif;color:#333;text-align:center;padding:50px}h1{font-size:3em;margin:0}hr{max-width:300px;margin:20px auto;border:0;border-top:1px solid #eee}span{font-size:0.8em;color:#999}</style></head><body><h1>429</h1><p>Too Many Requests</p><hr><span>ANX Server</span></body></html>"
+    len_429 = . - http_429
+    .global http_429, len_429
+
     /* Accept-Ranges header */
-    http_accept_ranges: .ascii "Accept-Ranges: bytes\r\n"
+    http_accept_ranges: .ascii "\r\nAccept-Ranges: bytes"
     len_accept_ranges = . - http_accept_ranges
     .global http_accept_ranges, len_accept_ranges
 
@@ -565,6 +591,11 @@
     worker_count:   .skip 4
     worker_pids:    .skip 256     /* Up to 64 worker PIDs (4 bytes each) */
     pid_file_path:  .skip 256
+    client_accepts_gzip: .skip 4
+    serving_gzip:   .skip 4
+    gzip_path_buf:  .skip 2048
+    matched_location: .skip 8
+    reload_requested: .skip 4
     
     .global current_status
     .global current_method
@@ -577,6 +608,9 @@
     .global log_fd
     .global key_access_log
     .global worker_stack_end
+    .global client_accepts_gzip, serving_gzip, gzip_path_buf
+    .global reload_requested
+    .global matched_location
 
 .data
     log_fd:         .word 1     /* Default to stdout (1) */

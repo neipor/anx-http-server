@@ -89,8 +89,9 @@ base64_encode:
     
     /* Process 3 bytes at a time */
     mov     x5, x20
-    udiv    x6, x5, x3          /* Number of complete triplets */
-    msub    x7, x6, x3, x5      /* Remainder */
+    mov     x9, #3
+    udiv    x6, x5, x9          /* Number of complete triplets */
+    msub    x7, x6, x9, x5      /* Remainder */
 
 base64_encode_loop:
     cbz     x6, base64_encode_tail

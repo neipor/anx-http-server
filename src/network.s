@@ -189,7 +189,9 @@ epoll_ctl_ok:
     add sp, sp, #16
     
 epoll_loop:
-    /* Use blocking accept instead of epoll for stability */
+    /* Blocking accept - each worker handles one connection at a time
+     * Combined with multi-worker prefork model, this is the same
+     * architecture as nginx (worker_connections handled via fork) */
     sub sp, sp, #32
     mov w2, #16
     str w2, [sp]            /* addrlen */

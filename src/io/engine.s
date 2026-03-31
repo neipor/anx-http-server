@@ -170,8 +170,9 @@ register_done:
  * Returns: x0 = 0 on success, error code on failure
  */
 io_engine_unregister_fd:
-    stp     x29, x30, [sp, #-16]!
+    stp     x29, x30, [sp, #-32]!
     mov     x29, sp
+    stp     x19, x20, [sp, #16]
     
     mov     x19, x0                 /* fd */
     
@@ -196,7 +197,8 @@ unregister_fail:
     mov     x0, #ERR_IO
 
 unregister_done:
-    ldp     x29, x30, [sp], #16
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #32
     ret
 
 /* ========================================================================
@@ -211,9 +213,12 @@ unregister_done:
  * Returns: x0 = number of events, or error code on failure
  */
 io_engine_wait_events:
-    stp     x29, x30, [sp, #-32]!
+    stp     x29, x30, [sp, #-80]!
     mov     x29, sp
     stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
+    stp     x23, x24, [sp, #48]
+    stp     x25, x26, [sp, #64]
     
     mov     x19, x0                 /* events array */
     mov     x20, x1                 /* max events */
@@ -222,15 +227,15 @@ io_engine_wait_events:
     ldr     x3, =current_engine
     ldr     w21, [x3, #4]           /* engine_fd */
     
-    /* epoll_wait */
+    /* epoll_pwait */
     mov     x0, x21                 /* epfd */
     ldr     x1, =epoll_events       /* events buffer */
     cmp     x20, #32
     csel    x2, x20, x2, le         /* min(max_events, 32) */
     mov     x3, x2                  /* timeout */
     mov     x4, #0                  /* sigmask = NULL */
-    mov     x5, #0
-    mov     x8, #22                 /* SYS_EPOLL_WAIT */
+    mov     x5, #0                  /* sigsetsize = 0 */
+    mov     x8, #441                /* SYS_EPOLL_PWAIT */
     svc     #0
     
     cmp     x0, #0
@@ -280,8 +285,11 @@ wait_eintr:
     mov     x0, #0                  /* No events, retry */
 
 wait_done:
+    ldp     x25, x26, [sp, #64]
+    ldp     x23, x24, [sp, #48]
+    ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #32
+    ldp     x29, x30, [sp], #80
     ret
 
 /* ========================================================================
@@ -300,7 +308,7 @@ io_engine_close:
     ldr     w0, [x1, #4]            /* engine_fd */
     
     cmp     w0, #0
-    blt     engine_close_done
+    ble     engine_close_done
     
     /* Close epoll fd */
     mov     x8, #57                 /* SYS_CLOSE */

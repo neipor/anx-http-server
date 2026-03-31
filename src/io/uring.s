@@ -256,18 +256,5 @@ uring_close_done:
     ldp     x29, x30, [sp], #16
     ret
 
-/* ========================================================================
- * Helper: memset
- * ======================================================================== */
-memset:
-    cmp     x2, #0
-    beq     memset_done
-    mov     x3, #0
-memset_loop:
-    strb    w1, [x0, x3]
-    add     x3, x3, #1
-    cmp     x3, x2
-    blt     memset_loop
-memset_done:
-    ret
+
 

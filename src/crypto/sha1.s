@@ -47,11 +47,12 @@ sha1_initial:
  * x0 = context pointer
  */
 sha1_init:
-    stp     x29, x30, [sp, #-16]!
+    stp     x29, x30, [sp, #-32]!
     mov     x29, sp
-    
+    str     x19, [sp, #16]
+
     mov     x19, x0
-    
+
     /* Copy initial state */
     ldr     x1, =sha1_initial
     ldp     w2, w3, [x1]
@@ -60,18 +61,19 @@ sha1_init:
     stp     w2, w3, [x19, #8]
     ldr     w2, [x1, #16]
     str     w2, [x19, #16]
-    
+
     /* Clear count */
     str     xzr, [x19, #20]
-    
+
     /* Clear buffer */
     mov     x0, x19
     add     x0, x0, #28         /* sha1_buffer */
     mov     x1, #0
     mov     x2, #68             /* buffer + buf_used */
     bl      sha1_memset
-    
-    ldp     x29, x30, [sp], #16
+
+    ldr     x19, [sp, #16]
+    ldp     x29, x30, [sp], #32
     ret
 
 /* ========================================================================
@@ -85,10 +87,11 @@ sha1_init:
  * x2 = length in bytes
  */
 sha1_update:
-    stp     x29, x30, [sp, #-32]!
+    stp     x29, x30, [sp, #-48]!
     mov     x29, sp
     stp     x19, x20, [sp, #16]
-    
+    stp     x21, x22, [sp, #32]
+
     mov     x19, x0             /* ctx */
     mov     x20, x1             /* data */
     mov     x21, x2             /* len */
@@ -159,8 +162,9 @@ sha1_update_buffer_remainder:
     str     w21, [x19, #24]     /* buf_used = len */
 
 sha1_update_done:
+    ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #32
+    ldp     x29, x30, [sp], #48
     ret
 
 /* ========================================================================
@@ -173,13 +177,14 @@ sha1_update_done:
  * x1 = output digest (20 bytes)
  */
 sha1_final:
-    stp     x29, x30, [sp, #-32]!
+    stp     x29, x30, [sp, #-48]!
     mov     x29, sp
     stp     x19, x20, [sp, #16]
-    
+    str     x21, [sp, #32]
+
     mov     x19, x0             /* ctx */
     mov     x20, x1             /* digest */
-    
+
     ldr     w21, [x19, #24]     /* buf_used */
     
     /* Add padding: 0x80 followed by zeros */
@@ -252,8 +257,9 @@ sha1_final_pad_zeros:
     mov     x2, #96
     bl      sha1_memset
     
+    ldr     x21, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #32
+    ldp     x29, x30, [sp], #48
     ret
 
 /* ========================================================================

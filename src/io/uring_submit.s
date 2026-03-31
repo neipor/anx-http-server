@@ -227,7 +227,10 @@ uring_submit_read:
     str     w2, [x5, #16]           /* len */
     str     x3, [x5, #20]           /* off */
     str     x20, [x5, #24]          /* user_data */
-    
+
+    /* Memory barrier */
+    dmb     ishst
+
     /* Advance tail */
     ldr     x0, =uring_ring_state
     ldr     x1, [x0, #24]           /* sq_tail ptr */
@@ -284,7 +287,10 @@ uring_submit_write:
     str     w2, [x5, #16]           /* len */
     str     x3, [x5, #20]           /* off */
     str     x20, [x5, #24]          /* user_data */
-    
+
+    /* Memory barrier */
+    dmb     ishst
+
     /* Advance tail */
     ldr     x0, =uring_ring_state
     ldr     x1, [x0, #24]
@@ -340,7 +346,10 @@ uring_submit_accept:
     str     x1, [x5, #8]            /* addr */
     str     w3, [x5, #16]           /* accept_flags */
     str     x20, [x5, #24]          /* user_data */
-    
+
+    /* Memory barrier */
+    dmb     ishst
+
     /* Advance tail */
     ldr     x0, =uring_ring_state
     ldr     x1, [x0, #24]
@@ -410,9 +419,7 @@ uring_poll_loop:
     beq     uring_poll_done
     
     /* Get CQE */
-    and     w4, w1, w3              /* mask */
-    ldr     w5, [x21, #42]          /* cq_mask */
-    and     w4, w4, w5
+    and     w4, w1, w5              /* head & mask */
     
     ldr     x5, [x21, #64]          /* cqes ptr */
     mov     x6, #16                 /* sizeof(struct io_uring_cqe) */
@@ -477,9 +484,7 @@ uring_peek_cqe:
     beq     uring_peek_none
     
     /* Get CQE index */
-    and     w3, w3, w4
-    ldr     w5, [x1, #42]           /* cq_mask */
-    and     w3, w3, w5
+    and     w3, w3, w5              /* head & mask */
     
     /* Copy CQE to user buffer */
     ldr     x1, [x1, #64]           /* cqes ptr */

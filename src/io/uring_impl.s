@@ -62,7 +62,7 @@ uring_ring_state:   .skip 160       /* Global ring state */
  * Returns: x0 = 1 if supported, 0 if not
  */
 uring_kernel_version_check:
-    stp     x29, x30, [sp, #-128]!
+    stp     x29, x30, [sp, #-400]!
     mov     x29, sp
     
     /* Use uname to get kernel version */
@@ -101,7 +101,7 @@ uring_version_unsupported:
     mov     x0, #0
 
 uring_version_done:
-    ldp     x29, x30, [sp], #128
+    ldp     x29, x30, [sp], #400
     ret
 
 /* ========================================================================
@@ -115,9 +115,9 @@ uring_version_done:
  * Returns: x0 = 0 on success, -1 on failure
  */
 uring_setup_rings:
-    stp     x29, x30, [sp, #-144]!
+    stp     x29, x30, [sp, #-176]!
     mov     x29, sp
-    stp     x19, x20, [sp, #128]
+    stp     x19, x20, [sp, #16]
     
     mov     x19, x0                 /* entries */
     mov     x20, x1                 /* flags */
@@ -167,8 +167,8 @@ uring_setup_fail:
     mov     x0, #-1
 
 uring_setup_done:
-    ldp     x19, x20, [sp, #128]
-    ldp     x29, x30, [sp], #144
+    ldp     x19, x20, [sp, #16]
+    ldp     x29, x30, [sp], #176
     ret
 
 /* ========================================================================
@@ -205,7 +205,7 @@ uring_map_rings:
     mov     x0, #0                  /* addr (kernel chooses) */
     mov     x1, x24                 /* length */
     mov     x2, #3                  /* prot = PROT_READ | PROT_WRITE */
-    mov     x3, #0x11               /* flags = MAP_SHARED | MAP_POPULATE */
+    mov     x3, #0x8001             /* flags = MAP_SHARED | MAP_POPULATE */
     mov     x4, x21                 /* fd */
     ldr     w5, [x22]               /* sq_off.head (mmap offset) */
     mov     x8, #222                /* SYS_MMAP2 */
@@ -239,7 +239,7 @@ uring_map_rings:
     mov     x0, #0
     mov     x1, x24
     mov     x2, #3
-    mov     x3, #0x11
+    mov     x3, #0x8001
     mov     x4, x21
     ldr     w5, [x23]               /* cq_off.head */
     mov     x8, #222
@@ -271,7 +271,7 @@ uring_map_rings:
     mov     x0, #0
     mov     x1, x24
     mov     x2, #3
-    mov     x3, #0x11
+    mov     x3, #0x8001
     mov     x4, x21
     mov     x5, #0x10000000         /* IORING_OFF_SQES */
     mov     x8, #222
@@ -320,25 +320,36 @@ uring_unmap_rings:
     ldr     x1, [x0, #72]           /* sq_khead base */
     cbz     x1, uring_unmap_sq_skip
     mov     x0, x1
-    mov     x1, #8192               /* Approximate size */
+    ldr     x1, =uring_ring_state
+    ldr     w2, [x1, #12]           /* sq_entries */
+    mov     x3, #4
+    mul     x1, x2, x3
+    add     x1, x1, #8192
     mov     x8, #215                /* SYS_MUNMAP */
     svc     #0
 
 uring_unmap_sq_skip:
     /* Unmap CQ ring */
+    ldr     x0, =uring_ring_state
     ldr     x1, [x0, #88]           /* cq_khead base */
     cbz     x1, uring_unmap_cq_skip
     mov     x0, x1
-    mov     x1, #8192
+    ldr     x1, =uring_ring_state
+    ldr     w2, [x1, #44]           /* cq_entries */
+    mov     x3, #16
+    mul     x1, x2, x3
+    add     x1, x1, #8192
     mov     x8, #215
     svc     #0
 
 uring_unmap_cq_skip:
     /* Unmap SQEs */
+    ldr     x0, =uring_ring_state
     ldr     x1, [x0, #40]           /* sqes */
     cbz     x1, uring_unmap_done
     mov     x0, x1
-    ldr     w2, [x0, #12]           /* sq_entries */
+    ldr     x1, =uring_ring_state
+    ldr     w2, [x1, #12]           /* sq_entries */
     mov     x3, #64
     mul     x1, x2, x3
     mov     x8, #215
@@ -348,18 +359,5 @@ uring_unmap_done:
     ldp     x29, x30, [sp], #16
     ret
 
-/* ========================================================================
- * Helper: memset
- * ======================================================================== */
-memset:
-    cmp     x2, #0
-    beq     memset_done
-    mov     x3, #0
-memset_loop:
-    strb    w1, [x0, x3]
-    add     x3, x3, #1
-    cmp     x3, x2
-    blt     memset_loop
-memset_done:
-    ret
+
 
