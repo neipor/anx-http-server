@@ -2,8 +2,9 @@
 # High-Performance AArch64 Assembly HTTP/1.1 + HTTP/2 + WebSocket Server
 
 # Toolchain
-AS = as
-LD = ld
+CROSS_COMPILE ?= aarch64-linux-gnu-
+AS = $(CROSS_COMPILE)as
+LD = $(CROSS_COMPILE)ld
 ASFLAGS = -g
 LDFLAGS = -static
 
