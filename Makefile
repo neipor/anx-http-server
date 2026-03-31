@@ -10,7 +10,7 @@ LDFLAGS = -static
 
 # Version
 VERSION_MAJOR = 0
-VERSION_MINOR = 3
+VERSION_MINOR = 4
 VERSION_PATCH = 0
 VERSION_STAGE = dev
 
@@ -25,7 +25,8 @@ SRCS = config.s data.s listing.s http.s main.s network.s utils.s i18n.s cgi.s er
        protocol/websocket/frames.s protocol/websocket/handshake.s \
        core/memory.s core/simd.s \
        io/engine.s io/uring.s \
-       crypto/sha1.s crypto/base64.s
+       crypto/sha1.s crypto/base64.s \
+       security/acl.s security/redirect.s
 
 # Objects
 OBJS = $(patsubst %.s,$(BUILD_DIR)/%.o,$(SRCS))

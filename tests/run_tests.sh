@@ -354,6 +354,147 @@ test_tls() {
     log_pass "TLS tests skipped (pending implementation)"
 }
 
+# Test: HEAD method
+test_head_method() {
+    log_info "Testing HEAD method support..."
+    
+    # HEAD should return headers without body
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" -I http://localhost:$PORT/index.html)
+    if [ "$RESP" == "200" ]; then
+        log_pass "HEAD /index.html returns 200"
+    else
+        log_fail "HEAD /index.html returns $RESP"
+    fi
+    
+    # Check Content-Length header is present
+    HEADERS=$(curl -s -I http://localhost:$PORT/index.html)
+    if echo "$HEADERS" | grep -qi "Content-Length"; then
+        log_pass "HEAD response includes Content-Length"
+    else
+        log_fail "HEAD response missing Content-Length"
+    fi
+    
+    # Verify no body is returned (HEAD should have empty body)
+    BODY_SIZE=$(curl -s -o /dev/null -w "%{size_download}" -I http://localhost:$PORT/index.html)
+    if [ "$BODY_SIZE" == "0" ]; then
+        log_pass "HEAD method returns no body (0 bytes)"
+    else
+        log_fail "HEAD method returned $BODY_SIZE bytes (expected 0)"
+    fi
+}
+
+# Test: Range requests
+test_range_requests() {
+    log_info "Testing Range request support..."
+    
+    # Request a range
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" -H "Range: bytes=0-5" http://localhost:$PORT/index.html)
+    if [ "$RESP" == "206" ]; then
+        log_pass "Range request returns 206 Partial Content"
+    else
+        log_fail "Range request returns $RESP (expected 206)"
+    fi
+    
+    # Check Content-Range header
+    HEADERS=$(curl -s -D - -o /dev/null -H "Range: bytes=0-5" http://localhost:$PORT/index.html)
+    if echo "$HEADERS" | grep -qi "Content-Range"; then
+        log_pass "Range response includes Content-Range header"
+    else
+        log_fail "Range response missing Content-Range header"
+    fi
+    
+    # Check Accept-Ranges header on normal request
+    HEADERS=$(curl -s -D - -o /dev/null http://localhost:$PORT/index.html)
+    if echo "$HEADERS" | grep -qi "Accept-Ranges"; then
+        log_pass "Normal response includes Accept-Ranges header"
+    else
+        log_fail "Normal response missing Accept-Ranges header"
+    fi
+}
+
+# Test: Additional MIME types
+test_additional_mime_types() {
+    log_info "Testing additional MIME types..."
+    
+    # Create test files with various extensions
+    echo "test" > "$TEST_WWW/test.txt"
+    echo "<svg></svg>" > "$TEST_WWW/test.svg"
+    echo "{}" > "$TEST_WWW/test.xml"
+    echo "# test" > "$TEST_WWW/test.md"
+    echo "key,value" > "$TEST_WWW/test.csv"
+    
+    # Test text/plain
+    CT=$(curl -s -o /dev/null -w "%{content_type}" http://localhost:$PORT/test.txt)
+    if echo "$CT" | grep -q "text/plain"; then
+        log_pass "TXT has correct Content-Type (text/plain)"
+    else
+        log_fail "TXT Content-Type incorrect: $CT"
+    fi
+    
+    # Test SVG
+    CT=$(curl -s -o /dev/null -w "%{content_type}" http://localhost:$PORT/test.svg)
+    if echo "$CT" | grep -q "image/svg"; then
+        log_pass "SVG has correct Content-Type (image/svg+xml)"
+    else
+        log_fail "SVG Content-Type incorrect: $CT"
+    fi
+    
+    # Test XML
+    CT=$(curl -s -o /dev/null -w "%{content_type}" http://localhost:$PORT/test.xml)
+    if echo "$CT" | grep -q "application/xml"; then
+        log_pass "XML has correct Content-Type (application/xml)"
+    else
+        log_fail "XML Content-Type incorrect: $CT"
+    fi
+    
+    log_pass "Additional MIME type tests completed"
+}
+
+# Test: Cache headers
+test_cache_headers() {
+    log_info "Testing cache headers..."
+    
+    # Check ETag header
+    HEADERS=$(curl -s -D - -o /dev/null http://localhost:$PORT/index.html)
+    if echo "$HEADERS" | grep -qi "ETag"; then
+        log_pass "Response includes ETag header"
+    else
+        log_fail "Response missing ETag header"
+    fi
+    
+    # Check Cache-Control header
+    if echo "$HEADERS" | grep -qi "Cache-Control"; then
+        log_pass "Response includes Cache-Control header"
+    else
+        log_fail "Response missing Cache-Control header"
+    fi
+    
+    # Test conditional request with If-None-Match
+    ETAG=$(echo "$HEADERS" | grep -i "ETag" | head -1 | awk '{print $2}' | tr -d '\r')
+    if [ -n "$ETAG" ]; then
+        RESP=$(curl -s -o /dev/null -w "%{http_code}" -H "If-None-Match: $ETAG" http://localhost:$PORT/index.html)
+        if [ "$RESP" == "304" ]; then
+            log_pass "Conditional request returns 304 Not Modified"
+        else
+            log_fail "Conditional request returns $RESP (expected 304)"
+        fi
+    else
+        log_fail "Could not extract ETag for conditional request test"
+    fi
+}
+
+# Test: Server header
+test_server_header() {
+    log_info "Testing server header..."
+    
+    HEADERS=$(curl -s -D - -o /dev/null http://localhost:$PORT/index.html)
+    if echo "$HEADERS" | grep -qi "Server: ANX"; then
+        log_pass "Server header present"
+    else
+        log_fail "Server header missing"
+    fi
+}
+
 # Print summary
 print_summary() {
     echo ""
@@ -375,7 +516,7 @@ print_summary() {
 
 # Main test execution
 main() {
-    echo "ANX Web Server v0.1.0-alpha Test Suite"
+    echo "ANX Web Server v0.4.0-dev Test Suite"
     echo "======================================="
     
     # Setup
@@ -405,7 +546,14 @@ main() {
     test_version
     test_performance
     
-    # Future tests (v0.2.0)
+    # v0.4.0 new feature tests
+    test_head_method
+    test_range_requests
+    test_additional_mime_types
+    test_cache_headers
+    test_server_header
+    
+    # Future tests (v0.5.0)
     test_http2
     test_websocket
     test_tls

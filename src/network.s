@@ -31,6 +31,15 @@ server_init:
     mov x8, SYS_SETSOCKOPT
     svc #0
     
+    /* 2.1 SO_REUSEPORT (for multi-worker binding) */
+    mov x0, x19
+    mov x1, SOL_SOCKET
+    mov x2, SO_REUSEPORT
+    ldr x3, =optval
+    mov x4, #4
+    mov x8, SYS_SETSOCKOPT
+    svc #0
+    
     /* 3. Bind */
     ldr x1, =sockaddr
     ldr x2, =server_port
@@ -88,7 +97,11 @@ bind_fail:
 /* accept_loop(listen_fd) */
 accept_loop:
     mov x19, x0             /* x19 = listen_fd */
-    mov x20, #1             /* x20 = worker count (1 worker for stability) */
+    
+    /* Load worker count (already initialized in main.s) */
+    ldr x0, =worker_count
+    ldr w20, [x0]
+    mov w26, w20            /* w26 = total worker count for respawn */
 
 spawn_workers:
     cmp x20, #0
@@ -125,7 +138,7 @@ monitor_children:
     blt monitor_children
     
     /* A child died. Respawn it! */
-    mov x20, #1
+    mov w20, #1             /* Respawn 1 worker */
     b spawn_workers
 
 worker_routine:
@@ -257,6 +270,15 @@ do_accept:
     mov x2, SO_SNDTIMEO
     ldr x3, =timeout_tv
     mov x4, #16
+    mov x8, SYS_SETSOCKOPT
+    svc #0
+
+    /* Set TCP_NODELAY for lower latency */
+    mov x0, x25
+    mov x1, IPPROTO_TCP
+    mov x2, TCP_NODELAY
+    ldr x3, =optval
+    mov x4, #4
     mov x8, SYS_SETSOCKOPT
     svc #0
 

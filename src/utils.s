@@ -705,7 +705,7 @@ log_request:
     bl strlen
     add x22, x22, x0
     
-    /* 7. Status */
+    /* 7. Status (color-coded) */
     mov x0, x21
     cmp x0, #300
     blt l_green
@@ -744,7 +744,7 @@ l_col:
     mov w0, #0
     strb w0, [x22]
     
-    /* Write */
+    /* Write to log fd */
     ldr x0, =log_fd
     ldr w0, [x0]
     ldr x1, =log_buffer

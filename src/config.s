@@ -102,8 +102,7 @@ try_upstream_ip:
     add x0, x0, #12       /* "upstream_ip=" */
     mov x1, x0            /* Start of IP str */
     
-    /* We need to copy IP to a temporary buffer first because inet_aton expects null-terminated string */
-    /* Use path_buffer as temp since we are in config phase */
+    /* Copy IP to temporary buffer */
     ldr x0, =path_buffer
     bl copy_value_until_newline
     
@@ -117,15 +116,139 @@ try_upstream_port:
     ldr x1, =key_upstream_port
     bl strstr
     cmp x0, #0
-    beq rcf_end
+    beq try_worker_processes
     
     add x0, x0, #14       /* "upstream_port=" */
-    /* atoi expects string. If followed by newline, atoi stops at non-digit usually? */
-    /* My atoi: stops at < '0' || > '9'. So newline (10) will stop it. Safe. */
     bl atoi
     bl htons
     ldr x1, =upstream_port
     strh w0, [x1]
+
+try_worker_processes:
+    ldr x0, =config_buffer
+    ldr x1, =key_worker_processes
+    bl strstr
+    cmp x0, #0
+    beq try_keepalive_timeout
+    
+    add x0, x0, #17       /* Skip "worker_processes=" */
+    bl atoi
+    /* Clamp to MIN_WORKERS-MAX_WORKERS */
+    cmp x0, MIN_WORKERS
+    blt wc_min
+    cmp x0, MAX_WORKERS
+    bgt wc_max
+    b wc_store
+wc_min:
+    mov x0, MIN_WORKERS
+    b wc_store
+wc_max:
+    mov x0, MAX_WORKERS
+wc_store:
+    ldr x1, =worker_count
+    str w0, [x1]
+
+try_keepalive_timeout:
+    ldr x0, =config_buffer
+    ldr x1, =key_keepalive_timeout
+    bl strstr
+    cmp x0, #0
+    beq try_client_max_body
+    
+    add x0, x0, #18       /* Skip "keepalive_timeout=" */
+    bl atoi
+    ldr x1, =keepalive_timeout_val
+    str x0, [x1]
+    
+    /* Also update timeout_tv */
+    ldr x1, =timeout_tv
+    str x0, [x1]           /* tv_sec */
+
+try_client_max_body:
+    ldr x0, =config_buffer
+    ldr x1, =key_client_max_body
+    bl strstr
+    cmp x0, #0
+    beq try_server_tokens
+    
+    add x0, x0, #21       /* Skip "client_max_body_size=" */
+    bl atoi
+    ldr x1, =client_max_body_val
+    str x0, [x1]
+
+try_server_tokens:
+    ldr x0, =config_buffer
+    ldr x1, =key_server_tokens
+    bl strstr
+    cmp x0, #0
+    beq try_autoindex
+    
+    add x0, x0, #14       /* Skip "server_tokens=" */
+    /* Check if "on" or "off" */
+    mov x1, x0
+    ldr x0, =path_buffer
+    bl copy_value_until_newline
+    ldr x0, =path_buffer
+    ldr x1, =str_on
+    bl strcmp
+    cmp x0, #0
+    beq st_on
+    /* Default to off */
+    ldr x0, =server_tokens_flag
+    str wzr, [x0]
+    b try_autoindex
+st_on:
+    ldr x0, =server_tokens_flag
+    mov w1, #1
+    str w1, [x0]
+
+try_autoindex:
+    ldr x0, =config_buffer
+    ldr x1, =key_autoindex
+    bl strstr
+    cmp x0, #0
+    beq try_gzip_static
+    
+    add x0, x0, #10       /* Skip "autoindex=" */
+    mov x1, x0
+    ldr x0, =path_buffer
+    bl copy_value_until_newline
+    ldr x0, =path_buffer
+    ldr x1, =str_on
+    bl strcmp
+    cmp x0, #0
+    beq ai_on
+    ldr x0, =autoindex_flag
+    str wzr, [x0]
+    b try_gzip_static
+ai_on:
+    ldr x0, =autoindex_flag
+    mov w1, #1
+    str w1, [x0]
+
+try_gzip_static:
+    ldr x0, =config_buffer
+    ldr x1, =key_gzip_static
+    bl strstr
+    cmp x0, #0
+    beq rcf_end
+    
+    add x0, x0, #12       /* Skip "gzip_static=" */
+    mov x1, x0
+    ldr x0, =path_buffer
+    bl copy_value_until_newline
+    ldr x0, =path_buffer
+    ldr x1, =str_on
+    bl strcmp
+    cmp x0, #0
+    beq gz_on
+    ldr x0, =gzip_static_flag
+    str wzr, [x0]
+    b rcf_end
+gz_on:
+    ldr x0, =gzip_static_flag
+    mov w1, #1
+    str w1, [x0]
 
     b rcf_end
 

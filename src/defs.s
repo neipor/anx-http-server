@@ -52,6 +52,8 @@
 
 /* Socket Options */
 .equ TCP_DEFER_ACCEPT, 9
+.equ TCP_NODELAY, 1
+.equ TCP_CORK, 3
 .equ IPPROTO_TCP, 6
 .equ SOCK_NONBLOCK, 2048
 .equ SOCK_CLOEXEC, 524288
@@ -64,8 +66,10 @@
 .equ SOCK_STREAM, 1
 .equ SOL_SOCKET, 1
 .equ SO_REUSEADDR, 2
+.equ SO_REUSEPORT, 15
 .equ SO_RCVTIMEO, 20
 .equ SO_SNDTIMEO, 21
+.equ SO_KEEPALIVE, 9
 .equ O_RDONLY, 0
 .equ O_WRONLY, 1
 .equ O_CREAT, 0x40
@@ -93,3 +97,7 @@
 
 /* Clone Flags */
 .equ SIGCHLD_FLAG, 17     /* Exit signal for clone */
+
+/* Worker Limits */
+.equ MIN_WORKERS, 1
+.equ MAX_WORKERS, 128
