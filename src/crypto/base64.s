@@ -89,6 +89,7 @@ base64_encode:
     
     /* Process 3 bytes at a time */
     mov     x5, x20
+    mov     x3, #3              /* Divisor = 3 (x3 was the dstlen ptr, must reset) */
     udiv    x6, x5, x3          /* Number of complete triplets */
     msub    x7, x6, x3, x5      /* Remainder */
 

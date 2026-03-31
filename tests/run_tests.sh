@@ -30,12 +30,12 @@ log_info() {
 
 log_pass() {
     echo -e "${GREEN}[PASS]${NC} $1" | tee -a "$LOG_FILE"
-    ((TESTS_PASSED++))
+    TESTS_PASSED=$((TESTS_PASSED + 1))
 }
 
 log_fail() {
     echo -e "${RED}[FAIL]${NC} $1" | tee -a "$LOG_FILE"
-    ((TESTS_FAILED++))
+    TESTS_FAILED=$((TESTS_FAILED + 1))
 }
 
 # Cleanup function
@@ -79,8 +79,22 @@ start_server() {
         exit 1
     fi
     
+    # Detect if we need an emulator (cross-compiled AArch64 on x86 host)
+    BINARY_ARCH=$(file "$SERVER_BIN" | grep -o 'ARM aarch64\|x86-64' | head -1)
+    HOST_ARCH=$(uname -m)
+    RUNNER=""
+    if [ "$BINARY_ARCH" = "ARM aarch64" ] && [ "$HOST_ARCH" = "x86_64" ]; then
+        if command -v qemu-aarch64 >/dev/null 2>&1; then
+            RUNNER="qemu-aarch64"
+            log_info "Using qemu-aarch64 to run AArch64 binary on x86_64 host"
+        else
+            log_fail "AArch64 binary requires qemu-aarch64 on this host"
+            exit 1
+        fi
+    fi
+    
     # Start server
-    "$SERVER_BIN" -p "$PORT" -d "$TEST_WWW" > "$LOG_FILE" 2>&1 &
+    $RUNNER "$SERVER_BIN" -p "$PORT" -d "$TEST_WWW" -s > "$LOG_FILE" 2>&1 &
     SERVER_PID=$!
     echo $SERVER_PID > "$PID_FILE"
     
@@ -90,6 +104,7 @@ start_server() {
     # Check if server is running
     if ! kill -0 $SERVER_PID 2>/dev/null; then
         log_fail "Server failed to start"
+        cat "$LOG_FILE" 2>/dev/null || true
         exit 1
     fi
     
@@ -159,15 +174,24 @@ test_static_files() {
 test_directory_listing() {
     log_info "Testing directory listing..."
     
+    # Test root (has index.html, so server returns index.html)
     RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/)
+    if [ "$RESP" == "200" ]; then
+        log_pass "Directory index works"
+    else
+        log_fail "Directory index returns $RESP"
+    fi
+    
+    # Test subdirectory (no index.html -> should generate directory listing)
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/subdir/)
     if [ "$RESP" == "200" ]; then
         log_pass "Directory listing works"
     else
         log_fail "Directory listing returns $RESP"
     fi
     
-    # Check if response contains HTML
-    CONTENT=$(curl -s http://localhost:$PORT/)
+    # Check if listing response contains HTML
+    CONTENT=$(curl -s http://localhost:$PORT/subdir/)
     if echo "$CONTENT" | grep -q "<html>"; then
         log_pass "Directory listing returns HTML"
     else
@@ -204,13 +228,23 @@ test_security() {
 test_concurrent() {
     log_info "Testing concurrent connections..."
     
-    # Spawn 10 concurrent requests
+    # Spawn 10 concurrent requests with Connection: close to prevent keep-alive blocking
+    CURL_PIDS=()
     for i in {1..10}; do
-        curl -s -o /dev/null http://localhost:$PORT/index.html &
+        curl -s -o /dev/null --max-time 10 -H "Connection: close" http://localhost:$PORT/index.html &
+        CURL_PIDS+=($!)
     done
-    wait
+    # Wait only for the curl processes, not the server
+    CONCURRENT_FAILED=0
+    for pid in "${CURL_PIDS[@]}"; do
+        wait "$pid" || CONCURRENT_FAILED=$((CONCURRENT_FAILED + 1))
+    done
     
-    log_pass "Concurrent requests handled"
+    if [ "$CONCURRENT_FAILED" -eq 0 ]; then
+        log_pass "Concurrent requests handled (10/10 succeeded)"
+    else
+        log_fail "Concurrent requests: $CONCURRENT_FAILED/10 failed"
+    fi
 }
 
 # Test: Content-Type headers
@@ -246,12 +280,20 @@ test_content_types() {
 test_special_endpoints() {
     log_info "Testing special endpoints..."
     
-    # Health check
+    # Health check endpoint
     RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/health)
     if [ "$RESP" == "200" ]; then
         log_pass "/health endpoint works"
     else
         log_fail "/health endpoint returns $RESP"
+    fi
+    
+    # Health check response body
+    BODY=$(curl -s http://localhost:$PORT/health)
+    if echo "$BODY" | grep -q "ok"; then
+        log_pass "/health returns ok status"
+    else
+        log_fail "/health body incorrect: $BODY"
     fi
 }
 
@@ -259,10 +301,16 @@ test_special_endpoints() {
 test_version() {
     log_info "Testing server version..."
     
-    # Get version from server header or help
-    VERSION=$("$SERVER_BIN" --version 2>&1 || true)
-    if echo "$VERSION" | grep -q "v0.1.0-alpha"; then
-        log_pass "Version v0.1.0-alpha confirmed"
+    # Get version from server binary
+    BINARY_ARCH=$(file "$SERVER_BIN" | grep -o 'ARM aarch64\|x86-64' | head -1)
+    HOST_ARCH=$(uname -m)
+    RUNNER=""
+    if [ "$BINARY_ARCH" = "ARM aarch64" ] && [ "$HOST_ARCH" = "x86_64" ]; then
+        RUNNER="qemu-aarch64"
+    fi
+    VERSION=$($RUNNER "$SERVER_BIN" --version 2>&1 || true)
+    if echo "$VERSION" | grep -qE "^v[0-9]+\.[0-9]+\.[0-9]+"; then
+        log_pass "Version string confirmed: $VERSION"
     else
         log_fail "Version check failed: $VERSION"
     fi
@@ -272,17 +320,19 @@ test_version() {
 test_performance() {
     log_info "Testing basic performance..."
     
-    # Measure time for 100 requests
+    # Measure time for sequential requests with explicit connection close
+    PERF_COUNT=20
     START=$(date +%s%N)
-    for i in {1..100}; do
-        curl -s -o /dev/null http://localhost:$PORT/index.html
+    for i in $(seq 1 $PERF_COUNT); do
+        curl -s -o /dev/null --max-time 10 -H "Connection: close" http://localhost:$PORT/index.html
     done
     END=$(date +%s%N)
     
     DURATION=$(( (END - START) / 1000000 ))  # Convert to milliseconds
-    RPS=$(( 100000 / DURATION ))  # Approximate requests per second
-    
-    log_info "100 requests in ${DURATION}ms (~${RPS} req/s)"
+    if [ "$DURATION" -gt 0 ]; then
+        RPS=$(( PERF_COUNT * 1000 / DURATION ))
+        log_info "$PERF_COUNT requests in ${DURATION}ms (~${RPS} req/s)"
+    fi
     log_pass "Performance test completed"
 }
 

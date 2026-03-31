@@ -242,18 +242,28 @@ child_meth_done:
     svc #0
 
 cgi_fork_fail:
-    /* Close pipe ends */
-    mov x0, x21
+    /* Close all 4 pipe file descriptors */
+    mov x0, x22         /* pipe1_read */
     mov x8, SYS_CLOSE
     svc #0
-    mov x0, x22
+    mov x0, x23         /* pipe1_write */
     mov x8, SYS_CLOSE
     svc #0
-    
+    mov x0, x24         /* pipe2_read */
+    mov x8, SYS_CLOSE
+    svc #0
+    mov x0, x25         /* pipe2_write */
+    mov x8, SYS_CLOSE
+    svc #0
+
 cgi_fail:
     mov x0, #-1
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #32
+    ldp x29, x30, [sp], #96
     ret
 
     .data

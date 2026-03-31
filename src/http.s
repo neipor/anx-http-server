@@ -70,6 +70,13 @@ hc_loop:
     ldr w0, [x0]
     cbnz w0, handle_proxy   /* If upstream_ip != 0, proxy it */
     
+    /* 2.3 Check /health endpoint */
+    ldr x0, =req_path
+    ldr x1, =path_health
+    bl strcmp
+    cmp x0, #0
+    beq handle_health
+    
     /* 2.5 Check Connection: close */
     ldr x0, =req_buffer
     ldr x1, =str_conn_close
@@ -348,7 +355,56 @@ serve_file:
     bl strcmp
     cmp x0, #0
     beq invoke_cgi
-    
+
+    /* Check .json */
+    mov x0, x19
+    ldr x1, =ext_json
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_json
+
+    /* Check .png */
+    mov x0, x19
+    ldr x1, =ext_png
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_png
+
+    /* Check .jpg */
+    mov x0, x19
+    ldr x1, =ext_jpg
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_jpg
+
+    /* Check .ico */
+    mov x0, x19
+    ldr x1, =ext_ico
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_ico
+
+    /* Check .svg */
+    mov x0, x19
+    ldr x1, =ext_svg
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_svg
+
+    /* Check .xml */
+    mov x0, x19
+    ldr x1, =ext_xml
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_xml
+
+    /* Check .pdf */
+    mov x0, x19
+    ldr x1, =ext_pdf
+    bl strcmp
+    cmp x0, #0
+    beq set_mime_pdf
+
     /* Default */
     b set_mime_bin
 
@@ -384,6 +440,34 @@ set_mime_js:
 set_mime_txt:
     ldr x25, =mime_txt
     mov x26, #10
+    b send_response
+set_mime_json:
+    ldr x25, =mime_json
+    mov x26, #16
+    b send_response
+set_mime_png:
+    ldr x25, =mime_png
+    mov x26, #9
+    b send_response
+set_mime_jpg:
+    ldr x25, =mime_jpg
+    mov x26, #10
+    b send_response
+set_mime_ico:
+    ldr x25, =mime_ico
+    mov x26, #12
+    b send_response
+set_mime_svg:
+    ldr x25, =mime_svg
+    mov x26, #13
+    b send_response
+set_mime_xml:
+    ldr x25, =mime_xml
+    mov x26, #15
+    b send_response
+set_mime_pdf:
+    ldr x25, =mime_pdf
+    mov x26, #15
     b send_response
 set_mime_bin:
     ldr x25, =mime_bin
@@ -551,6 +635,19 @@ send_304:
 /* ------------------------------------------------------------------------- */
 /* Error Handlers */
 /* ------------------------------------------------------------------------- */
+handle_health:
+    mov x0, x20
+    ldr x1, =http_health_resp
+    ldr x2, =len_health_resp
+    mov x8, SYS_WRITE
+    svc #0
+
+    ldr x0, =current_status
+    mov w1, #200
+    str w1, [x0]
+    bl log_request
+    b hc_close_final
+
 send_400:
     mov x0, x20
     ldr x1, =http_400
@@ -633,6 +730,19 @@ pr_loop:
     bge pr_err
     b pr_loop
 pr_found_method:
+    /* Store method in global req_method buffer */
+    ldr x4, =req_method
+    mov x5, #0
+pr_method_copy:
+    cmp x5, x2
+    bge pr_method_done
+    ldrb w3, [x1, x5]
+    strb w3, [x4, x5]
+    add x5, x5, #1
+    b pr_method_copy
+pr_method_done:
+    strb wzr, [x4, x5]   /* null terminate method */
+
     add x1, x1, x2  /* Space after method */
     add x1, x1, #1  /* Start of path */
     
@@ -674,19 +784,21 @@ pr_query_done:
     ret
 
 pr_path_done:
-    strb wzr, [x4, x5] /* Null terminate */
-    
+    strb wzr, [x4, x5] /* Null terminate req_path */
+
+    /* Check if path is empty -> default to "/" */
+    cmp x5, #0
+    bne pr_path_nonempty
+    ldr x4, =req_path   /* Reload req_path (x4 still points here, but be explicit) */
+    mov w3, #47         /* '/' */
+    strb w3, [x4]
+    strb wzr, [x4, #1]
+pr_path_nonempty:
+
     /* Ensure query_string is empty if no '?' */
     ldr x4, =query_string
     strb wzr, [x4]
-    
-    /* Check if path is empty -> / */
-    cmp x5, #0
-    bne pr_ok
-    mov w3, #47     /* / */
-    strb w3, [x4]
-    strb wzr, [x4, #1]
-    
+
 pr_ok:
     mov x0, #0
     ret

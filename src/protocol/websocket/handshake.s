@@ -152,7 +152,7 @@ ws_extract_copy:
     
     /* Max key length is 24 */
     cmp     x21, #24
-    ble     ws_extract_copy
+    blt     ws_extract_copy
 
 ws_extract_done:
     /* Null terminate */
