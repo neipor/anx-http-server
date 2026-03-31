@@ -730,9 +730,13 @@ pr_loop:
     bge pr_err
     b pr_loop
 pr_found_method:
-    /* Store method in global req_method buffer */
+    /* Store method in global req_method buffer (max 15 chars + null) */
     ldr x4, =req_method
     mov x5, #0
+    cmp x2, #15                 /* Limit method length to 15 (buffer is 16 bytes) */
+    ble pr_method_limit_ok
+    mov x2, #15
+pr_method_limit_ok:
 pr_method_copy:
     cmp x5, x2
     bge pr_method_done

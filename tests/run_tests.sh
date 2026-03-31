@@ -309,7 +309,7 @@ test_version() {
         RUNNER="qemu-aarch64"
     fi
     VERSION=$($RUNNER "$SERVER_BIN" --version 2>&1 || true)
-    if echo "$VERSION" | grep -qE "^v[0-9]+\.[0-9]+\.[0-9]+"; then
+    if echo "$VERSION" | grep -qE "^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+)?$"; then
         log_pass "Version string confirmed: $VERSION"
     else
         log_fail "Version check failed: $VERSION"
