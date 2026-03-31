@@ -411,7 +411,12 @@ handle_dir:
     cmp x0, #0
     beq handle_file_load_size         /* index.html exists -> serve it */
     
-    /* Else -> Listing */
+    /* Else -> Check autoindex */
+    ldr x0, =autoindex_flag
+    ldr w0, [x0]
+    cbz w0, send_403        /* autoindex off -> 403 Forbidden */
+    
+    /* Listing */
     ldr x0, =path_buffer    /* dst */
     ldr x1, =server_root    /* src */
     bl strcpy
