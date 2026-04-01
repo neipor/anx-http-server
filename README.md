@@ -26,8 +26,15 @@ A production-grade, high-performance web server written entirely in AArch64 asse
 | CGI execution | ✅ |
 | WebSocket upgrade | ✅ |
 | Nginx combined access log (file + colorized console) | ✅ |
-| `/server-status` JSON endpoint | ✅ |
+| `/server-status` JSON endpoint (live request counter) | ✅ |
 | Graceful reload (`kill -HUP <pid>`) | ✅ |
+| Log rotation (`kill -USR1 <pid>`) | ✅ |
+| `return` directive (301/302/307 redirects) | ✅ |
+| `add_header` directive (custom response headers) | ✅ |
+| `expires` directive (Cache-Control header) | ✅ |
+| `gzip_min_length` (skip compression for small files) | ✅ |
+| `server_tokens off` (hide Server header) | ✅ |
+| X-Forwarded-For in reverse proxy mode | ✅ |
 | PID file | ✅ |
 | Config test (`-t` / `--test`) | ✅ |
 | Systemd service file | ✅ |

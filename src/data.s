@@ -205,7 +205,7 @@
     .global pid_file_path, pid_file_default
 
     /* HTTP Headers & Error Pages */
-    http_server_hdr: .ascii "Server: ANX/5.0\r\n"
+    http_server_hdr: .ascii "Server: ANX/6.0\r\n"
     len_server_hdr = . - http_server_hdr
     
     http_date_hdr_prefix: .ascii "Date: "
@@ -341,14 +341,25 @@
     .global path_server_status
 
     server_status_hdr:
-        .ascii "Server: ANX/5.0\r\nContent-Type: application/json\r\nCache-Control: no-cache\r\n\r\n"
+        .ascii "Server: ANX/6.0\r\nContent-Type: application/json\r\nCache-Control: no-cache\r\n\r\n"
     len_server_status_hdr = . - server_status_hdr
     .global server_status_hdr, len_server_status_hdr
 
     server_status_json:
-        .ascii "{\"server\":\"ANX/5.0\",\"status\":\"active\",\"architecture\":\"aarch64\",\"workers\":4}\n"
+        .ascii "{\"server\":\"ANX/6.0\",\"status\":\"active\",\"architecture\":\"aarch64\",\"workers\":4}\n"
     len_server_status_json = . - server_status_json
     .global server_status_json, len_server_status_json
+
+    /* Dynamic /server-status JSON parts */
+    ss_json_prefix: .ascii "{\"server\":\"ANX/6.0\",\"status\":\"active\",\"requests\":"
+    len_ss_json_prefix = . - ss_json_prefix
+    ss_json_mid:    .ascii ",\"workers\":"
+    len_ss_json_mid = . - ss_json_mid
+    ss_json_suffix: .ascii ",\"architecture\":\"aarch64\"}\n"
+    len_ss_json_suffix = . - ss_json_suffix
+    .global ss_json_prefix, len_ss_json_prefix
+    .global ss_json_mid, len_ss_json_mid
+    .global ss_json_suffix, len_ss_json_suffix
 
     /* OPTIONS Response */
     http_options_resp:
@@ -358,7 +369,7 @@
         .ascii "Access-Control-Allow-Methods: GET, HEAD, POST, PUT, DELETE, OPTIONS, PATCH\r\n"
         .ascii "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With\r\n"
         .ascii "Access-Control-Max-Age: 86400\r\n"
-        .ascii "Server: ANX/5.0\r\n"
+        .ascii "Server: ANX/6.0\r\n"
         .ascii "Content-Length: 0\r\n"
         .ascii "\r\n"
     len_options_resp = . - http_options_resp
@@ -672,6 +683,26 @@
     .global log_buffer2
     .global gzip_chunk_buf, gzip_pipe_fds
 
+    /* v0.6.0 new config variables */
+    .align 4
+    return_code:        .skip 4     /* HTTP redirect code (301/302/307/0=disabled) */
+    return_url_buf:     .skip 256   /* Redirect URL for return directive */
+    add_headers_count:  .skip 4     /* Number of custom headers (0-8) */
+    add_headers_buf:    .skip 2048  /* 8x (64B name + 192B value) custom headers */
+    .align 8
+    expires_seconds:    .skip 8     /* Cache-Control max-age in seconds (-1=off, 0=no-cache) */
+    .align 4
+    gzip_min_length:    .skip 4     /* Min file size for dynamic gzip (bytes, default 1024) */
+    server_tokens:      .skip 4     /* 1=show Server header, 0=hide */
+    .align 8
+    stats_mmap_ptr:     .skip 8     /* Pointer to shared stats page */
+
+    .global return_code, return_url_buf
+    .global add_headers_count, add_headers_buf
+    .global expires_seconds
+    .global gzip_min_length, server_tokens
+    .global stats_mmap_ptr
+
 .data
     log_combined_dash:  .asciz " - - ["
     log_combined_proto: .asciz " HTTP/1.1\" "
@@ -690,6 +721,34 @@
     gzip_argc:  .asciz "-c"
     .global gzip_bin, gzip_arg0, gzip_argc
     log_fd:         .word 1     /* Default to stdout (1) */
+
+    /* v0.6.0 response strings */
+    http_redirect_301:  .ascii "HTTP/1.1 301 Moved Permanently\r\nLocation: "
+    len_redirect_301 = . - http_redirect_301
+    http_redirect_302:  .ascii "HTTP/1.1 302 Found\r\nLocation: "
+    len_redirect_302 = . - http_redirect_302
+    http_redirect_307:  .ascii "HTTP/1.1 307 Temporary Redirect\r\nLocation: "
+    len_redirect_307 = . - http_redirect_307
+    http_redirect_end:  .ascii "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    len_redirect_end = . - http_redirect_end
+    hdr_cache_control:  .ascii "\r\nCache-Control: max-age="
+    len_hdr_cache_control = . - hdr_cache_control
+    hdr_cache_no_cache: .ascii "\r\nCache-Control: no-cache, no-store, must-revalidate"
+    len_hdr_cache_no_cache = . - hdr_cache_no_cache
+    hdr_x_fwd_for:      .ascii "X-Forwarded-For: "
+    len_hdr_x_fwd_for = . - hdr_x_fwd_for
+    str_crlf:           .ascii "\r\n"
+    len_crlf = . - str_crlf
+    .global http_redirect_301, len_redirect_301
+    .global http_redirect_302, len_redirect_302
+    .global http_redirect_307, len_redirect_307
+    .global http_redirect_end, len_redirect_end
+    .global hdr_cache_control, len_hdr_cache_control
+    .global hdr_cache_no_cache, len_hdr_cache_no_cache
+    .global hdr_x_fwd_for, len_hdr_x_fwd_for
+    .global str_crlf, len_crlf
+    str_header_sep:         .ascii ": "
+    .global str_header_sep
 
 /* Worker stack - each worker gets 64KB stack */
 .bss

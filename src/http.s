@@ -60,6 +60,17 @@ hc_loop:
     
     mov x25, x0             /* Save request length */
 
+    /* Atomic request counter increment (shared stats page) */
+    ldr x9, =stats_mmap_ptr
+    ldr x9, [x9]
+    cbz x9, hc_no_stats
+hc_stats_inc:
+    ldxr x10, [x9]
+    add x10, x10, #1
+    stxr w11, x10, [x9]
+    cbnz w11, hc_stats_inc
+hc_no_stats:
+
     /* Reset range flag for each new request */
     ldr x0, =has_range_request
     str wzr, [x0]
@@ -137,6 +148,11 @@ check_trav_real:
     bl check_rate_limit
     cbz x0, send_429        /* 0 = rate limited */
     
+    /* 3.65 Check server-level return directive */
+    ldr x0, =return_code
+    ldr w0, [x0]
+    cbnz w0, send_redirect
+
     /* 3.7 Location Routing */
     ldr x0, =req_path
     bl match_location
@@ -272,12 +288,70 @@ handle_proxy:
     
     mov x21, x0             /* x21 = upstream_fd */
     
-    /* Forward Request */
+/* Forward Request with X-Forwarded-For */
+    /* Find end of request line (first \r\n) */
     mov x0, x21
     ldr x1, =req_buffer
-    mov x2, x25             /* len */
+    ldr x2, =str_crlf
+    /* Scan for \r\n */
+    mov x3, x1              /* cursor */
+xff_scan:
+    ldrb w4, [x3]
+    cbz w4, xff_fallback
+    cmp w4, #0x0D
+    bne xff_next
+    ldrb w4, [x3, #1]
+    cmp w4, #0x0A
+    beq xff_found
+xff_next:
+    add x3, x3, #1
+    b xff_scan
+xff_found:
+    add x3, x3, #2          /* past \r\n */
+    /* Write request line (req_buffer .. x3) */
+    mov x0, x21
+    mov x1, x1              /* req_buffer */
+    sub x2, x3, x1          /* bytes of first line + CRLF */
     mov x8, SYS_WRITE
     svc #0
+    /* Write X-Forwarded-For header */
+    mov x0, x21
+    ldr x1, =hdr_x_fwd_for
+    mov x2, #17             /* len_hdr_x_fwd_for */
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x21
+    ldr x1, =client_ip_str
+    bl strlen
+    mov x2, x0
+    mov x0, x21
+    ldr x1, =client_ip_str
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x21
+    ldr x1, =str_crlf
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    /* Write rest of request (from x3 onwards) */
+    mov x0, x21
+    mov x1, x3
+    ldr x4, =req_buffer
+    sub x2, x25, x3
+    add x2, x2, x4          /* remaining = total_len - (x3 - req_buffer) */
+    cmp x2, #0
+    ble xff_done
+    mov x8, SYS_WRITE
+    svc #0
+    b xff_done
+xff_fallback:
+    /* Fallback: send whole request unmodified */
+    mov x0, x21
+    ldr x1, =req_buffer
+    mov x2, x25
+    mov x8, SYS_WRITE
+    svc #0
+xff_done:
     
     /* Relay Response Loop */
 proxy_loop:
@@ -907,6 +981,13 @@ maybe_dynamic_gzip:
     ldr x0, =serving_gzip
     ldr w0, [x0]
     cbnz w0, send_response
+    /* Check gzip_min_length: skip compression if file too small */
+    ldr x0, =gzip_min_length
+    ldr w0, [x0]
+    cbz w0, mdgz_do          /* 0 = always gzip */
+    cmp x22, x0
+    blt send_response        /* file smaller than min_length */
+mdgz_do:
     b serve_dynamic_gzip
 
 send_response:
@@ -941,12 +1022,16 @@ do_send_conn:
     mov x8, SYS_WRITE
     svc #0
     
-    /* 1.5 Write Server Header */
+    /* 1.5 Write Server Header (skip if server_tokens off) */
+    ldr x0, =server_tokens
+    ldr w0, [x0]
+    cbz w0, sr_skip_server_hdr
     mov x0, x20
     ldr x1, =http_server_hdr
     ldr x2, =len_server_hdr
     mov x8, SYS_WRITE
     svc #0
+sr_skip_server_hdr:
 
     /* 1.51 Write Date Header */
     stp x29, x30, [sp, #-16]!
@@ -978,6 +1063,58 @@ do_send_conn:
     ldr x2, =len_quote_newline
     mov x8, SYS_WRITE
     svc #0
+
+    /* 1.58 Emit custom add_header headers (format: Name: value\r\n) */
+    /* Use x23/x24 as loop-persistent vars (callee-saved, already on handle_client's frame) */
+    ldr x23, =add_headers_count
+    ldr w23, [x23]           /* x23 = header count */
+    cbz x23, sr_add_hdrs_done
+    ldr x24, =add_headers_buf /* x24 = buffer base */
+    mov x19, #0              /* x19 = loop index (callee-saved, safe across bl) */
+sr_add_hdr_loop:
+    cmp x19, x23
+    bge sr_add_hdrs_done
+    /* write name: strlen(slot+0) then write */
+    lsl x12, x19, #8
+    add x12, x24, x12        /* x12 = slot ptr */
+    mov x0, x12              /* x0 = name ptr for strlen */
+    bl strlen                /* x0 = name length; x19/x23/x24 preserved (callee-saved) */
+    mov x2, x0               /* length */
+    mov x0, x20              /* fd */
+    lsl x12, x19, #8        /* recompute slot ptr (x12 may be clobbered by strlen) */
+    add x12, x24, x12
+    mov x1, x12              /* name ptr */
+    mov x8, SYS_WRITE
+    svc #0
+    /* write ": " */
+    mov x0, x20
+    ldr x1, =str_header_sep
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    /* write value: strlen(slot+64) then write */
+    lsl x12, x19, #8
+    add x12, x24, x12
+    add x12, x12, #64        /* value offset */
+    mov x0, x12              /* x0 = value ptr for strlen */
+    bl strlen                /* x0 = value length */
+    mov x2, x0
+    mov x0, x20
+    lsl x12, x19, #8        /* recompute slot ptr */
+    add x12, x24, x12
+    add x12, x12, #64
+    mov x1, x12
+    mov x8, SYS_WRITE
+    svc #0
+    /* write \r\n to terminate this header */
+    mov x0, x20
+    ldr x1, =str_crlf
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    add x19, x19, #1
+    b sr_add_hdr_loop
+sr_add_hdrs_done:
 
     /* 1.6 Write Content-Type Label */
     mov x0, x20
@@ -1015,6 +1152,37 @@ do_send_conn:
     ldr x2, =len_accept_ranges
     mov x8, SYS_WRITE
     svc #0
+
+    /* 5.2 Write Cache-Control header if expires_seconds set */
+    ldr x0, =expires_seconds
+    ldr x0, [x0]
+    cmn x0, #1              /* cmp x0, #-1 */
+    beq sr_no_cache_ctrl    /* -1 = disabled */
+    cbnz x0, sr_cc_maxage
+    /* 0 = no-cache */
+    mov x0, x20
+    ldr x1, =hdr_cache_no_cache
+    mov x2, #52             /* len_hdr_cache_no_cache */
+    mov x8, SYS_WRITE
+    svc #0
+    b sr_no_cache_ctrl
+sr_cc_maxage:
+    /* N = max-age=N */
+    mov x9, x0              /* save seconds */
+    mov x0, x20
+    ldr x1, =hdr_cache_control
+    mov x2, #25             /* len_hdr_cache_control */
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x9
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =content_len_str
+    mov x8, SYS_WRITE
+    svc #0
+sr_no_cache_ctrl:
 
     /* 5.5 Write header end */
     mov x0, x20
@@ -1455,6 +1623,57 @@ send_304:
 /* ------------------------------------------------------------------------- */
 /* Error Handlers */
 /* ------------------------------------------------------------------------- */
+
+/* send_redirect: send 301/302/307 redirect using return_code / return_url_buf */
+send_redirect:
+    ldr x9, =return_code
+    ldr w9, [x9]
+    /* Select status line based on code */
+    cmp w9, #301
+    bne srd_try302
+    mov x0, x20
+    ldr x1, =http_redirect_301
+    mov x2, #42
+    b srd_send_status
+srd_try302:
+    cmp w9, #302
+    bne srd_try307
+    mov x0, x20
+    ldr x1, =http_redirect_302
+    mov x2, #30
+    b srd_send_status
+srd_try307:
+    mov x0, x20
+    ldr x1, =http_redirect_307
+    mov x2, #43
+srd_send_status:
+    mov x8, SYS_WRITE
+    svc #0
+    /* Write URL */
+    ldr x1, =return_url_buf
+    mov x0, x1              /* x0 = string ptr for strlen */
+    bl strlen
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =return_url_buf
+    mov x8, SYS_WRITE
+    svc #0
+    /* Write end of redirect response */
+    mov x0, x20
+    ldr x1, =http_redirect_end
+    mov x2, #42             /* len_redirect_end */
+    mov x8, SYS_WRITE
+    svc #0
+    ldr x0, =current_status
+    ldr w1, [x9]
+    str w1, [x0]            /* log the redirect code */
+    ldr x1, =return_code
+    ldr w1, [x1]
+    ldr x0, =current_status
+    str w1, [x0]
+    bl log_request
+    b hc_close_final
+
 send_400:
     mov x0, x20
     ldr x1, =http_400
@@ -1673,9 +1892,47 @@ send_server_status:
     mov x8, SYS_WRITE
     svc #0
 
+    /* Build dynamic JSON with request counter */
+    ldr x9, =stats_mmap_ptr
+    ldr x9, [x9]
+    mov x10, #0             /* default counter = 0 */
+    cbz x9, sss_no_stats
+    ldr x10, [x9]           /* request_total */
+sss_no_stats:
+    /* Write JSON prefix */
     mov x0, x20
-    ldr x1, =server_status_json
-    ldr x2, =len_server_status_json
+    ldr x1, =ss_json_prefix
+    ldr x2, =len_ss_json_prefix
+    mov x8, SYS_WRITE
+    svc #0
+    /* Write request count */
+    mov x0, x10
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =content_len_str
+    mov x8, SYS_WRITE
+    svc #0
+    /* Write worker count */
+    mov x0, x20
+    ldr x1, =ss_json_mid
+    ldr x2, =len_ss_json_mid
+    mov x8, SYS_WRITE
+    svc #0
+    ldr x0, =worker_count
+    ldr w0, [x0]
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =content_len_str
+    mov x8, SYS_WRITE
+    svc #0
+    /* Write JSON suffix */
+    mov x0, x20
+    ldr x1, =ss_json_suffix
+    ldr x2, =len_ss_json_suffix
     mov x8, SYS_WRITE
     svc #0
 

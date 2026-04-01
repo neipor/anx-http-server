@@ -9,8 +9,8 @@ LDFLAGS = -static
 
 # Version
 VERSION_MAJOR = 0
-VERSION_MINOR = 5
-VERSION_PATCH = 1
+VERSION_MINOR = 6
+VERSION_PATCH = 0
 VERSION_STAGE = release
 
 # Directories

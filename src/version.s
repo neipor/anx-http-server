@@ -2,8 +2,8 @@
 .global msg_version_current, len_version_current
 .global version_major, version_minor, version_patch
 .data
-msg_version_current: .ascii "v0.5.1-release"
+msg_version_current: .ascii "v0.6.0-release"
 len_version_current = . - msg_version_current
 version_major: .byte 0
-version_minor: .byte 5
-version_patch: .byte 1
+version_minor: .byte 6
+version_patch: .byte 0

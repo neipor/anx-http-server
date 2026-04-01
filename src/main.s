@@ -17,6 +17,18 @@ _start:
     ldr x1, =pid_file_default
     bl strcpy
 
+    /* Initialize config defaults */
+    ldr x0, =gzip_min_length
+    mov w1, #1024
+    str w1, [x0]            /* gzip_min_length = 1024 bytes */
+    ldr x0, =server_tokens
+    mov w1, #1
+    str w1, [x0]            /* server_tokens = on (1) */
+    /* expires_seconds = -1 (disabled by default) */
+    ldr x0, =expires_seconds
+    mov x1, #-1
+    str x1, [x0]
+
     /* Parse CLI Arguments */
     ldr x19, [sp]           /* x19 = argc */
     add x20, sp, #8         /* x20 = &argv[0] */
@@ -466,6 +478,22 @@ pid_fail:
     ldr x1, =accept_mutex_ptr
     str x0, [x1]
 
+    /* Allocate shared stats page (request counters, active connections) */
+    mov x0, #0
+    mov x1, #4096
+    mov x2, #(PROT_READ|PROT_WRITE)
+    mov x3, #(MAP_SHARED|MAP_ANONYMOUS)
+    mov x4, #-1
+    mov x5, #0
+    mov x8, SYS_MMAP
+    svc #0
+    ldr x1, =stats_mmap_ptr
+    str x0, [x1]
+    /* Zero the stats page */
+    str xzr, [x0]
+    str xzr, [x0, #8]
+    str xzr, [x0, #16]
+
 fork_workers:
     cmp w21, w20
     bge master_loop          /* All workers forked, go to master */
@@ -757,7 +785,18 @@ setup_signals:
     mov x3, #8
     mov x8, SYS_RT_SIGACTION
     svc #0
-    
+
+    /* SIGUSR1 - log rotation */
+    ldr x0, =sigusr1_handler
+    str x0, [sp, #16]
+    str xzr, [sp, #24]
+    mov x0, #10             /* SIGUSR1 = 10 */
+    add x1, sp, #16
+    mov x2, #0
+    mov x3, #8
+    mov x8, SYS_RT_SIGACTION
+    svc #0
+
     ldp x29, x30, [sp], #32
     ret
 
@@ -765,6 +804,32 @@ sighup_handler:
     ldr x0, =reload_requested
     mov w1, #1
     str w1, [x0]
+    ret
+
+sigusr1_handler:
+    /* Log rotation: close current log fd and reopen the file */
+    ldr x0, =log_fd
+    ldr w9, [x0]
+    cmp w9, #1
+    ble slr_reopen           /* fd <=1 means stdout, don't close */
+    mov x0, x9
+    mov x8, SYS_CLOSE
+    svc #0
+slr_reopen:
+    ldr x1, =access_log_path
+    ldrb w0, [x1]
+    cbz w0, slr_done         /* No path configured */
+    mov x0, AT_FDCWD
+    /* x1 = access_log_path already */
+    mov x2, #0x441           /* O_WRONLY|O_CREAT|O_APPEND */
+    mov x3, #0644
+    mov x8, SYS_OPENAT
+    svc #0
+    cmp x0, #0
+    blt slr_done
+    ldr x1, =log_fd
+    str w0, [x1]
+slr_done:
     ret
 
 shutdown_handler:

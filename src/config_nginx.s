@@ -248,7 +248,28 @@ npc_http_dir:
     mov x2, x24
     bl npc_match_dir
     cbnz x0, npc_skip_to_semi  /* Just skip includes for now */
-    
+
+    /* Check "gzip_min_length" */
+    mov x0, x23
+    ldr x1, =dir_gzip_min_len
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_gzip_min_len
+
+    /* Check "server_tokens" */
+    mov x0, x23
+    ldr x1, =dir_server_tokens
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_server_tokens
+
+    /* Check "expires" */
+    mov x0, x23
+    ldr x1, =dir_expires
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_expires
+
     bl npc_skip_to_semi
     b npc_loop
 
@@ -316,7 +337,42 @@ npc_server_dir:
     mov x2, x24
     bl npc_match_dir
     cbnz x0, npc_parse_body_size
-    
+
+    /* Check "return" */
+    mov x0, x23
+    ldr x1, =dir_return
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_return
+
+    /* Check "add_header" */
+    mov x0, x23
+    ldr x1, =dir_add_header
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_add_header
+
+    /* Check "expires" */
+    mov x0, x23
+    ldr x1, =dir_expires
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_expires
+
+    /* Check "gzip_min_length" */
+    mov x0, x23
+    ldr x1, =dir_gzip_min_len
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_gzip_min_len
+
+    /* Check "server_tokens" */
+    mov x0, x23
+    ldr x1, =dir_server_tokens
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_server_tokens
+
     bl npc_skip_to_semi
     b npc_loop
 
@@ -349,7 +405,42 @@ npc_location_dir:
     mov x2, x24
     bl npc_match_dir
     cbnz x0, npc_skip_to_semi /* TODO: implement */
-    
+
+    /* Check "return" */
+    mov x0, x23
+    ldr x1, =dir_return
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_return
+
+    /* Check "add_header" */
+    mov x0, x23
+    ldr x1, =dir_add_header
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_add_header
+
+    /* Check "expires" */
+    mov x0, x23
+    ldr x1, =dir_expires
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_expires
+
+    /* Check "gzip_min_length" */
+    mov x0, x23
+    ldr x1, =dir_gzip_min_len
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_gzip_min_len
+
+    /* Check "server_tokens" */
+    mov x0, x23
+    ldr x1, =dir_server_tokens
+    mov x2, x24
+    bl npc_match_dir
+    cbnz x0, npc_parse_server_tokens
+
     bl npc_skip_to_semi
     b npc_loop
 
@@ -426,6 +517,156 @@ npc_parse_access_log:
     bl npc_skip_ws
     ldr x0, =access_log_path
     bl npc_copy_value
+    b npc_loop
+
+npc_parse_return:
+    /* Syntax: return CODE [URL]; */
+    bl npc_skip_ws
+    mov x0, x19
+    bl atoi
+    ldr x1, =return_code
+    str w0, [x1]
+    /* Skip the digits of the code */
+npc_ret_skip_digits:
+    ldrb w0, [x19]
+    cmp w0, #'0'
+    blt npc_ret_done_digits
+    cmp w0, #'9'
+    bgt npc_ret_done_digits
+    add x19, x19, #1
+    b npc_ret_skip_digits
+npc_ret_done_digits:
+    bl npc_skip_ws
+    /* Copy URL if present */
+    ldr x0, =return_url_buf
+    bl npc_copy_value
+    b npc_loop
+
+npc_parse_add_header:
+    /* Syntax: add_header Name "Value"; or add_header Name Value; */
+    bl npc_skip_ws
+    /* Check count limit */
+    ldr x0, =add_headers_count
+    ldr w1, [x0]
+    cmp w1, #8
+    bge npc_add_hdr_skip
+    /* Calculate destination: add_headers_buf + count * 256 */
+    /* Store count in a temporary we'll recompute from */
+    mov x5, x1               /* x5 = count (saved before any bl) */
+    ldr x2, =add_headers_buf
+    lsl x4, x5, #8           /* offset = count * 256 */
+    add x2, x2, x4           /* x2 = slot base ptr */
+    /* Copy name (first 64 bytes of slot) — x2 may be clobbered by bl */
+    mov x0, x2
+    bl npc_copy_token         /* copies name, advances x19 */
+    bl npc_skip_ws
+    /* Recompute slot ptr since x2 may be clobbered */
+    ldr x2, =add_headers_buf
+    lsl x4, x5, #8           /* offset = count * 256 */
+    add x2, x2, x4           /* x2 = slot base ptr again */
+    /* Copy value (next 192 bytes at slot+64) */
+    add x0, x2, #64
+    bl npc_copy_value
+    /* Increment count */
+    ldr x0, =add_headers_count
+    add w5, w5, #1
+    str w5, [x0]
+    b npc_loop
+npc_add_hdr_skip:
+    bl npc_skip_to_semi
+    b npc_loop
+
+npc_parse_expires:
+    /* Syntax: expires off|epoch|max|Nd|Nh|Nm|Ns|NUMBER; */
+    bl npc_skip_ws
+    ldr x0, =expires_seconds
+    ldrb w1, [x19]
+    cmp w1, #'o'
+    bne npc_exp_not_off
+    /* "off" -> -1 (disabled) */
+    mov x1, #-1
+    str x1, [x0]
+    bl npc_skip_to_semi
+    b npc_loop
+npc_exp_not_off:
+    cmp w1, #'e'
+    bne npc_exp_not_epoch
+    /* "epoch" -> 0 */
+    str xzr, [x0]
+    bl npc_skip_to_semi
+    b npc_loop
+npc_exp_not_epoch:
+    cmp w1, #'m'
+    bne npc_exp_not_max
+    /* "max" -> 315360000 (10 years) */
+    ldr x1, =315360000
+    str x1, [x0]
+    bl npc_skip_to_semi
+    b npc_loop
+npc_exp_not_max:
+    /* Parse number + optional unit */
+    mov x0, x19
+    bl atoi
+    mov x2, x0              /* x2 = numeric value */
+    /* Skip digits */
+npc_exp_skip_d:
+    ldrb w0, [x19]
+    cmp w0, #'0'
+    blt npc_exp_got_unit
+    cmp w0, #'9'
+    bgt npc_exp_got_unit
+    add x19, x19, #1
+    b npc_exp_skip_d
+npc_exp_got_unit:
+    ldrb w0, [x19]
+    cmp w0, #'d'
+    bne npc_exp_not_day
+    ldr x3, =86400
+    mul x2, x2, x3
+    b npc_exp_store
+npc_exp_not_day:
+    cmp w0, #'h'
+    bne npc_exp_not_hour
+    mov x3, #3600
+    mul x2, x2, x3
+    b npc_exp_store
+npc_exp_not_hour:
+    cmp w0, #'m'
+    bne npc_exp_store       /* no unit or 's' = seconds as-is */
+    mov x3, #60
+    mul x2, x2, x3
+npc_exp_store:
+    ldr x0, =expires_seconds
+    str x2, [x0]
+    bl npc_skip_to_semi
+    b npc_loop
+
+npc_parse_gzip_min_len:
+    bl npc_skip_ws
+    mov x0, x19
+    bl atoi
+    ldr x1, =gzip_min_length
+    str w0, [x1]
+    bl npc_skip_to_semi
+    b npc_loop
+
+npc_parse_server_tokens:
+    bl npc_skip_ws
+    ldrb w0, [x19]
+    ldr x1, =server_tokens
+    cmp w0, #'o'
+    bne npc_st_on
+    add x2, x19, #1
+    ldrb w2, [x2]
+    cmp w2, #'f'
+    bne npc_st_on           /* "on" starts with 'o' but second char is 'n' */
+    str wzr, [x1]           /* "off" -> 0 */
+    bl npc_skip_to_semi
+    b npc_loop
+npc_st_on:
+    mov w2, #1
+    str w2, [x1]            /* "on" -> 1 */
+    bl npc_skip_to_semi
     b npc_loop
 
 npc_parse_error_page:
@@ -764,6 +1005,26 @@ npc_md_no:
     ldp x29, x30, [sp], #16
     ret
 
+/* npc_copy_token: copy non-whitespace chars from [x19] to [x0], advance x19, null-terminate */
+npc_copy_token:
+    mov x1, #0
+npc_ct_loop:
+    ldrb w2, [x19]
+    cbz w2, npc_ct_done
+    cmp w2, #' '
+    beq npc_ct_done
+    cmp w2, #0x09           /* tab */
+    beq npc_ct_done
+    cmp w2, #';'
+    beq npc_ct_done
+    strb w2, [x0, x1]
+    add x1, x1, #1
+    add x19, x19, #1
+    b npc_ct_loop
+npc_ct_done:
+    strb wzr, [x0, x1]
+    ret
+
 /* npc_copy_value(dest) - copy value until semicolon/newline to dest */
 /* x0 = destination, x19 = source (advanced) */
 npc_copy_value:
@@ -827,6 +1088,11 @@ npc_cv_null:
     dir_proxy_pass:         .asciz "proxy_pass"
     dir_try_files:          .asciz "try_files"
     dir_client_max_body:    .asciz "client_max_body_size"
+    dir_return:             .asciz "return"
+    dir_add_header:         .asciz "add_header"
+    dir_expires:            .asciz "expires"
+    dir_gzip_min_len:       .asciz "gzip_min_length"
+    dir_server_tokens:      .asciz "server_tokens"
     
     /* Messages */
     msg_nginx_conf_err:     .ascii "\x1b[1;31m[ERROR]\x1b[0m Failed to read nginx config file\n"
