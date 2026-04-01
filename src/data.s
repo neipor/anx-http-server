@@ -336,6 +336,20 @@
         .ascii "<!DOCTYPE html><html><head><title>502 Bad Gateway</title><style>body{font-family:system-ui,sans-serif;color:#333;text-align:center;padding:50px}h1{font-size:3em;margin:0}hr{max-width:300px;margin:20px auto;border:0;border-top:1px solid #eee}span{font-size:0.8em;color:#999}</style></head><body><h1>502</h1><p>Bad Gateway</p><hr><span>ANX Server</span></body></html>"
     len_502 = . - http_502
 
+    /* /server-status endpoint */
+    path_server_status: .asciz "/server-status"
+    .global path_server_status
+
+    server_status_hdr:
+        .ascii "Server: ANX/5.0\r\nContent-Type: application/json\r\nCache-Control: no-cache\r\n\r\n"
+    len_server_status_hdr = . - server_status_hdr
+    .global server_status_hdr, len_server_status_hdr
+
+    server_status_json:
+        .ascii "{\"server\":\"ANX/5.0\",\"status\":\"active\",\"architecture\":\"aarch64\",\"workers\":4}\n"
+    len_server_status_json = . - server_status_json
+    .global server_status_json, len_server_status_json
+
     /* OPTIONS Response */
     http_options_resp:
         .ascii "HTTP/1.1 200 OK\r\n"
@@ -636,6 +650,8 @@
     range_end: .skip 8
     .align 8
     accept_mutex_ptr: .skip 8   /* pointer to shared mmap region for accept mutex */
+    gzip_chunk_buf: .skip 8192  /* 8KB chunk buffer for dynamic gzip output */
+    gzip_pipe_fds: .skip 8      /* [read_fd, write_fd] for gzip pipe */
 
     .global accept_mutex_ptr
     .global current_status

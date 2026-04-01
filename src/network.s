@@ -213,6 +213,23 @@ epoll_loop:
     /* Release accept mutex before handling client */
     bl unlock_accept_mutex
 
+    /* Set SO_RCVTIMEO on client socket to prevent indefinite blocking */
+    sub sp, sp, #16
+    ldr x1, =keepalive_timeout
+    ldr w2, [x1]
+    cbz w2, ka_timeout_skip
+    str x2, [sp]            /* tv_sec = keepalive_timeout */
+    str xzr, [sp, #8]       /* tv_usec = 0 */
+    mov x0, x25             /* client_fd */
+    mov x1, #1              /* SOL_SOCKET */
+    mov x2, #20             /* SO_RCVTIMEO */
+    mov x3, sp              /* timeval ptr */
+    mov x4, #16             /* optlen */
+    mov x8, SYS_SETSOCKOPT
+    svc #0
+ka_timeout_skip:
+    add sp, sp, #16
+
     /* Handle the client */
     mov x0, x25
     bl handle_client

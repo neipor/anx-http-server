@@ -60,6 +60,10 @@ hc_loop:
     
     mov x25, x0             /* Save request length */
 
+    /* Reset range flag for each new request */
+    ldr x0, =has_range_request
+    str wzr, [x0]
+
     /* 2. Parse Request */
     ldr x0, =req_buffer
     bl parse_request
@@ -423,6 +427,65 @@ handle_dir:
 /* Serve File Logic */
 /* ------------------------------------------------------------------------- */
 serve_file:
+    /* Parse Range header if present */
+    ldr x0, =req_buffer
+    ldr x1, =str_range_header
+    bl strstr
+    cbz x0, no_range_request
+
+    /* x0 -> "Range: bytes=NNN-MMM", skip "Range: bytes=" (13 chars) */
+    add x0, x0, #13
+    mov x1, #0              /* start accumulator */
+    mov x2, #10             /* decimal multiplier */
+parse_range_start:
+    ldrb w3, [x0], #1
+    cmp w3, #'-'
+    beq range_start_done
+    sub w3, w3, #'0'
+    cmp w3, #9
+    bhi no_range_request    /* non-digit before '-': malformed */
+    mul x1, x1, x2
+    add x1, x1, x3
+    b parse_range_start
+range_start_done:
+    ldr x4, =range_start
+    str x1, [x4]
+
+    /* Peek: if next char is \r or \n, it's an open-ended range */
+    ldrb w3, [x0]
+    cmp w3, #0x0d
+    beq range_end_open
+    cmp w3, #0x0a
+    beq range_end_open
+    cbz w3, range_end_open
+
+    /* Parse end number */
+    mov x1, #0
+parse_range_end:
+    ldrb w3, [x0], #1
+    cmp w3, #0x0d
+    beq range_end_done
+    cmp w3, #0x0a
+    beq range_end_done
+    cbz w3, range_end_done
+    sub w3, w3, #'0'
+    cmp w3, #9
+    bhi range_end_done      /* stop on non-digit */
+    mul x1, x1, x2
+    add x1, x1, x3
+    b parse_range_end
+    b range_end_done
+
+range_end_open:
+    mov x1, #-1             /* sentinel: "to end of file" */
+range_end_done:
+    ldr x4, =range_end
+    str x1, [x4]
+    mov w1, #1
+    ldr x4, =has_range_request
+    str w1, [x4]
+
+no_range_request:
     /* Check gzip_static: if client accepts gzip, try file.gz */
     ldr x0, =client_accepts_gzip
     ldr w0, [x0]
@@ -829,7 +892,12 @@ send_response:
     ldr x0, =serving_gzip
     ldr w0, [x0]
     cbnz w0, send_response_gzip
-    
+
+    /* Check for Range request (not supported for gzip_static) */
+    ldr x0, =has_range_request
+    ldr w0, [x0]
+    cbnz w0, send_partial_content
+
     /* 1. Write HTTP header start (Status) */
     mov x0, x20
     ldr x1, =http_status_200
@@ -975,6 +1043,229 @@ sendfile_done:
     
     cmp x28, #1
     beq hc_loop
+    b hc_close_final
+
+/* =========================================================================
+ * send_partial_content - Send 206 Partial Content response
+ * Register conventions (same as send_response):
+ *   x20 = client_fd, x21 = file_fd, x22 = total file_size
+ *   x25 = mime ptr, x26 = mime len, x27 = etag len, x28 = keep-alive
+ * ========================================================================= */
+send_partial_content:
+    /* Load and validate range bounds */
+    ldr x9, =range_start
+    ldr x9, [x9]
+    ldr x10, =range_end
+    ldr x10, [x10]
+    mov x23, x22            /* x23 = total file size (callee-saved, preserved across bl calls) */
+
+    /* Clamp range_end: if sentinel (-1) or >= file_size, use file_size - 1 */
+    sub x11, x22, #1
+    cmp x10, x22
+    blt spc_range_end_ok
+    mov x10, x11
+spc_range_end_ok:
+    /* 416 if range_start >= file_size */
+    cmp x9, x22
+    bge send_416
+    /* 416 if range_end < range_start */
+    cmp x10, x9
+    blt send_416
+
+    /* content_length = range_end - range_start + 1 */
+    sub x22, x10, x9
+    add x22, x22, #1
+
+    /* --- Status line --- */
+    mov x0, x20
+    ldr x1, =http_206
+    mov x2, #30             /* len("HTTP/1.1 206 Partial Content\r\n") */
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* --- Connection header --- */
+    cmp x28, #1
+    beq spc_ka
+    ldr x1, =http_conn_close_hdr
+    ldr x2, =len_conn_close_hdr
+    b spc_conn
+spc_ka:
+    ldr x1, =http_conn_ka
+    ldr x2, =len_conn_ka
+spc_conn:
+    mov x0, x20
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* --- Server header --- */
+    mov x0, x20
+    ldr x1, =http_server_hdr
+    ldr x2, =len_server_hdr
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* --- Date header --- */
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl get_http_date
+    ldp x29, x30, [sp], #16
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =http_date_buffer
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* --- Content-Type: label + MIME --- */
+    mov x0, x20
+    ldr x1, =http_content_type
+    ldr x2, =len_content_type
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x20
+    mov x1, x25
+    mov x2, x26
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* --- Content-Range: bytes START-END/TOTAL\r\n ---
+     * http_content_range starts with "\r\n" which terminates Content-Type */
+    mov x0, x20
+    ldr x1, =http_content_range
+    ldr x2, =len_content_range
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Write range_start */
+    mov x0, x9
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =content_len_str
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Write "-" */
+    mov x0, x20
+    ldr x1, =str_dash
+    mov x2, #1
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Write range_end */
+    mov x0, x10
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =content_len_str
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Write "/" */
+    mov x0, x20
+    ldr x1, =str_slash
+    mov x2, #1
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Write total file size */
+    mov x0, x23
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =content_len_str
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Write "\r\n" to end Content-Range header */
+    mov x0, x20
+    ldr x1, =str_http_end   /* "\r\n\r\n" - write only first 2 bytes */
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* --- Content-Length: content_length --- */
+    mov x0, x20
+    ldr x1, =http_content_len  /* "\r\nContent-Length: " */
+    mov x2, #18
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x22
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =content_len_str
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* --- Accept-Ranges: bytes + end of headers --- */
+    mov x0, x20
+    ldr x1, =http_accept_ranges  /* "\r\nAccept-Ranges: bytes" */
+    ldr x2, =len_accept_ranges
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x20
+    ldr x1, =http_end            /* "\r\n\r\n" */
+    mov x2, #4
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Skip body for HEAD requests */
+    ldr x0, =current_method
+    ldr w0, [x0]
+    cmp w0, #METHOD_HEAD
+    beq spc_done
+
+    /* --- Send partial body via sendfile with offset --- */
+    ldr x0, =sendfile_offset
+    str x9, [x0]            /* offset = range_start */
+spc_sendfile_loop:
+    cmp x22, #0
+    ble spc_done
+    mov x0, x20
+    mov x1, x21
+    ldr x2, =sendfile_offset
+    mov x3, x22
+    mov x8, SYS_SENDFILE
+    svc #0
+    cmp x0, #0
+    ble spc_done
+    sub x22, x22, x0
+    b spc_sendfile_loop
+
+spc_done:
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+
+    ldr x0, =current_status
+    mov w1, #206
+    str w1, [x0]
+    bl log_request
+
+    cmp x28, #1
+    beq hc_loop
+    b hc_close_final
+
+send_416:
+    /* Close file before sending error response */
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+
+    mov x0, x20
+    ldr x1, =http_416
+    ldr x2, =len_416
+    mov x8, SYS_WRITE
+    svc #0
+
+    ldr x0, =current_status
+    mov w1, #416
+    str w1, [x0]
+    bl log_request
     b hc_close_final
 
 /* =========================================================================
