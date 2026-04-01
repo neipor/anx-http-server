@@ -785,15 +785,250 @@ l_col:
     mov w0, #0
     strb w0, [x22]
     
-    /* Write */
-    ldr x0, =log_fd
-    ldr w0, [x0]
+    /* Write colorized line to stdout (fd 1) */
+    mov x0, #1
     ldr x1, =log_buffer
     mov x2, x22
     sub x2, x2, x1
     mov x8, SYS_WRITE
     svc #0
-    
+
+    /* Write nginx combined format to access log file if configured */
+    ldr x0, =access_log_path
+    ldrb w1, [x0]
+    cbz w1, log_done            /* No access_log configured - skip */
+
+    /* Open access log file (append mode) */
+    mov x0, #-100               /* AT_FDCWD */
+    ldr x1, =access_log_path
+    mov x2, #(0x441)            /* O_WRONLY|O_CREAT|O_APPEND */
+    mov x3, #0644
+    mov x8, SYS_OPENAT
+    svc #0
+    cmp x0, #0
+    blt log_done                /* Open failed - skip */
+    mov x19, x0                 /* x19 = log file fd */
+
+    /* Build nginx combined format in log_buffer2:
+     * IP - - [DD/Mon/YYYY:HH:MM:SS +0000] "METHOD PATH HTTP/1.1" STATUS -
+     */
+    ldr x22, =log_buffer2
+
+    /* IP */
+    mov x0, x22
+    ldr x1, =client_ip_str
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+
+    /* " - - [" */
+    mov x0, x22
+    ldr x1, =log_combined_dash
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+
+    /* Timestamp: DD/Mon/YYYY:HH:MM:SS +0000 */
+    /* Get current time via clock_gettime */
+    sub sp, sp, #16
+    mov x0, #0
+    mov x1, sp
+    mov x8, #113
+    svc #0
+    ldr x23, [sp]               /* unix seconds */
+    add sp, sp, #16
+
+    /* day-of-week (unused here), compute date components */
+    ldr x1, =86400
+    udiv x24, x23, x1          /* days since epoch */
+    msub x25, x24, x1, x23    /* seconds in day */
+    mov x1, #3600
+    udiv x26, x25, x1          /* hours */
+    msub x25, x26, x1, x25
+    mov x1, #60
+    udiv x27, x25, x1          /* minutes */
+    msub x28, x27, x1, x25    /* seconds */
+
+    /* civil_from_days for month/day/year */
+    ldr x0, =719468
+    add x0, x24, x0
+    ldr x1, =146097
+    udiv x2, x0, x1
+    msub x3, x2, x1, x0
+    mov x4, #1460
+    udiv x5, x3, x4
+    mov x4, #36524
+    udiv x6, x3, x4
+    udiv x7, x3, x1
+    sub x4, x3, x5
+    add x4, x4, x6
+    sub x4, x4, x7
+    mov x5, #365
+    udiv x4, x4, x5            /* yoe */
+    mul x5, x4, x5
+    mov x6, #4
+    udiv x6, x4, x6
+    add x5, x5, x6
+    mov x6, #100
+    udiv x6, x4, x6
+    sub x5, x5, x6
+    sub x5, x3, x5             /* doy */
+    mov x6, #5
+    mul x6, x5, x6
+    add x6, x6, #2
+    mov x7, #153
+    udiv x6, x6, x7            /* mp */
+    mul x7, x6, x7
+    add x7, x7, #2
+    mov x8, #5
+    udiv x7, x7, x8
+    sub x8, x5, x7
+    add x8, x8, #1             /* x8 = day */
+    cmp x6, #10
+    bge lcf_m_ge10
+    add x6, x6, #3
+    b lcf_m_done
+lcf_m_ge10:
+    sub x6, x6, #9
+lcf_m_done:                    /* x6 = month */
+    mov x7, #400
+    mul x7, x2, x7
+    add x4, x4, x7             /* x4 = year */
+    cmp x6, #2
+    bgt lcf_no_yr
+    add x4, x4, #1
+lcf_no_yr:
+    /* x4=year, x6=month, x8=day, x26=hour, x27=min, x28=sec */
+
+    /* DD */
+    mov x0, x8
+    mov x1, x22
+    bl itoa_pad2
+    add x22, x22, x0
+    mov w0, #'/'
+    strb w0, [x22], #1
+
+    /* Mon */
+    ldr x0, =month_names
+    sub x1, x6, #1
+    mov x2, #3
+    mul x1, x1, x2
+    add x0, x0, x1
+    ldrb w1, [x0]
+    strb w1, [x22], #1
+    ldrb w1, [x0, #1]
+    strb w1, [x22], #1
+    ldrb w1, [x0, #2]
+    strb w1, [x22], #1
+    mov w0, #'/'
+    strb w0, [x22], #1
+
+    /* YYYY */
+    mov x0, x4
+    mov x1, x22
+    bl itoa
+    add x22, x22, x0
+    mov w0, #':'
+    strb w0, [x22], #1
+
+    /* HH:MM:SS */
+    mov x0, x26
+    mov x1, x22
+    bl itoa_pad2
+    add x22, x22, x0
+    mov w0, #':'
+    strb w0, [x22], #1
+    mov x0, x27
+    mov x1, x22
+    bl itoa_pad2
+    add x22, x22, x0
+    mov w0, #':'
+    strb w0, [x22], #1
+    mov x0, x28
+    mov x1, x22
+    bl itoa_pad2
+    add x22, x22, x0
+
+    /* " +0000] \"" */
+    mov w0, #' '
+    strb w0, [x22], #1
+    mov w0, #'+'
+    strb w0, [x22], #1
+    mov w0, #'0'
+    strb w0, [x22], #1
+    strb w0, [x22], #1
+    strb w0, [x22], #1
+    strb w0, [x22], #1
+    mov w0, #']'
+    strb w0, [x22], #1
+    mov w0, #' '
+    strb w0, [x22], #1
+    mov w0, #'"'
+    strb w0, [x22], #1
+
+    /* METHOD */
+    ldr x23, =req_buffer
+    mov x0, #0
+lcf_meth:
+    ldrb w1, [x23, x0]
+    cbz w1, lcf_meth_done
+    cmp w1, #' '
+    beq lcf_meth_done
+    strb w1, [x22, x0]
+    add x0, x0, #1
+    cmp x0, #10
+    blt lcf_meth
+lcf_meth_done:
+    add x22, x22, x0
+    mov w0, #' '
+    strb w0, [x22], #1
+
+    /* PATH */
+    mov x0, x22
+    ldr x1, =req_path
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+
+    /* " HTTP/1.1" STATUS " -\n" */
+    mov x0, x22
+    ldr x1, =log_combined_proto
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+
+    /* STATUS code */
+    ldr x0, =current_status
+    ldr w0, [x0]
+    mov x1, x22
+    bl itoa
+    add x22, x22, x0
+
+    mov x0, x22
+    ldr x1, =log_combined_end
+    bl strcpy
+    mov x0, x22
+    bl strlen
+    add x22, x22, x0
+
+    /* Write to file */
+    mov x0, x19
+    ldr x1, =log_buffer2
+    mov x2, x22
+    sub x2, x2, x1
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Close log file */
+    mov x0, x19
+    mov x8, SYS_CLOSE
+    svc #0
+
+log_done:
     ldr x23, [sp, #48]
     ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]

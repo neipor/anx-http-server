@@ -83,7 +83,14 @@ hc_loop:
     /* Check for unsupported methods */
     cmp w0, #METHOD_UNKNOWN
     beq send_405
-    
+
+    /* Check /server-status */
+    ldr x0, =req_path
+    ldr x1, =path_server_status
+    bl strcmp
+    cmp x0, #0
+    beq send_server_status
+
     /* 2.1 Check Proxy */
     ldr x0, =upstream_ip
     ldr w0, [x0]
@@ -785,19 +792,19 @@ invoke_cgi:
 set_mime_html:
     ldr x25, =mime_html
     mov x26, #9
-    b send_response
+    b maybe_dynamic_gzip
 set_mime_css:
     ldr x25, =mime_css
     mov x26, #8
-    b send_response
+    b maybe_dynamic_gzip
 set_mime_js:
     ldr x25, =mime_js
     mov x26, #22
-    b send_response
+    b maybe_dynamic_gzip
 set_mime_json:
     ldr x25, =mime_json
     mov x26, #16
-    b send_response
+    b maybe_dynamic_gzip
 set_mime_png:
     ldr x25, =mime_png
     mov x26, #9
@@ -817,7 +824,7 @@ set_mime_webp:
 set_mime_svg:
     ldr x25, =mime_svg
     mov x26, #13
-    b send_response
+    b maybe_dynamic_gzip
 set_mime_ico:
     ldr x25, =mime_ico
     mov x26, #12
@@ -825,7 +832,7 @@ set_mime_ico:
 set_mime_xml:
     ldr x25, =mime_xml
     mov x26, #15
-    b send_response
+    b maybe_dynamic_gzip
 set_mime_pdf:
     ldr x25, =mime_pdf
     mov x26, #15
@@ -833,7 +840,7 @@ set_mime_pdf:
 set_mime_txt:
     ldr x25, =mime_txt
     mov x26, #10
-    b send_response
+    b maybe_dynamic_gzip
 set_mime_woff:
     ldr x25, =mime_woff
     mov x26, #17
@@ -886,6 +893,21 @@ set_mime_bin:
     ldr x25, =mime_bin
     mov x26, #24
     b send_response
+
+/* maybe_dynamic_gzip: called by text/* MIME types before send_response.
+ * If client accepts gzip and no static .gz is being served, fork gzip.
+ * Range requests always bypass dynamic gzip (go to send_response). */
+maybe_dynamic_gzip:
+    ldr x0, =has_range_request  /* Range takes priority */
+    ldr w0, [x0]
+    cbnz w0, send_response
+    ldr x0, =client_accepts_gzip
+    ldr w0, [x0]
+    cbz w0, send_response
+    ldr x0, =serving_gzip
+    ldr w0, [x0]
+    cbnz w0, send_response
+    b serve_dynamic_gzip
 
 send_response:
     /* Check if we're serving a gzip_static file */
@@ -1179,14 +1201,8 @@ spc_conn:
     mov x8, SYS_WRITE
     svc #0
 
-    /* Write "\r\n" to end Content-Range header */
-    mov x0, x20
-    ldr x1, =str_http_end   /* "\r\n\r\n" - write only first 2 bytes */
-    mov x2, #2
-    mov x8, SYS_WRITE
-    svc #0
-
-    /* --- Content-Length: content_length --- */
+    /* --- Content-Length: content_length ---
+     * http_content_len starts with \r\n which terminates Content-Range line */
     mov x0, x20
     ldr x1, =http_content_len  /* "\r\nContent-Length: " */
     mov x2, #18
@@ -1466,12 +1482,124 @@ send_403:
     b hc_close_final
 
 send_404:
+    /* Check custom error page for 404 */
+    ldr x0, =custom_error_code
+    ldr w0, [x0]
+    cmp w0, #404
+    bne send_404_default
+
+    /* Build full path: server_root + custom_error_path */
+    ldr x0, =path_buffer
+    ldr x1, =server_root
+    bl strcpy
+    ldr x0, =path_buffer
+    ldr x1, =custom_error_path
+    bl strcat
+
+    /* Open the custom error file */
+    mov x0, AT_FDCWD
+    ldr x1, =path_buffer
+    mov x2, #O_RDONLY
+    mov x3, #0
+    mov x8, SYS_OPENAT
+    svc #0
+    cmp x0, #0
+    blt send_404_default
+
+    mov x21, x0                 /* x21 = file_fd */
+
+    /* Stat file to get size */
+    mov x0, AT_FDCWD
+    ldr x1, =path_buffer
+    ldr x2, =stat_buffer
+    mov x3, #0
+    mov x8, SYS_NEWFSTATAT
+    svc #0
+    ldr x0, =stat_buffer
+    ldr x22, [x0, #48]          /* x22 = st_size */
+
+    /* Send 404 status line */
+    mov x0, x20
+    ldr x1, =http_status_404
+    mov x2, #24                 /* len("HTTP/1.1 404 Not Found\r\n") */
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Server header */
+    mov x0, x20
+    ldr x1, =http_server_hdr
+    ldr x2, =len_server_hdr
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Content-Type: text/html */
+    mov x0, x20
+    ldr x1, =http_content_type
+    ldr x2, =len_content_type
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x20
+    ldr x1, =mime_html
+    mov x2, #9
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Content-Length: N */
+    mov x0, x20
+    ldr x1, =http_content_len
+    mov x2, #18
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x22
+    ldr x1, =content_len_str
+    bl itoa
+    mov x2, x0
+    mov x0, x20
+    ldr x1, =content_len_str
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* End of headers */
+    mov x0, x20
+    ldr x1, =http_end
+    mov x2, #4
+    mov x8, SYS_WRITE
+    svc #0
+
+    /* Send file body via sendfile loop */
+    ldr x0, =sendfile_offset
+    str xzr, [x0]
+send_custom_404_body:
+    cmp x22, #0
+    ble send_custom_404_done
+    mov x0, x20
+    mov x1, x21
+    ldr x2, =sendfile_offset
+    mov x3, x22
+    mov x8, SYS_SENDFILE
+    svc #0
+    cmp x0, #0
+    ble send_custom_404_done
+    sub x22, x22, x0
+    b send_custom_404_body
+send_custom_404_done:
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+
+    ldr x0, =current_status
+    mov w1, #404
+    str w1, [x0]
+    bl log_request
+    b hc_close_final
+
+send_404_default:
     mov x0, x20
     ldr x1, =http_404
     ldr x2, =len_404
     mov x8, SYS_WRITE
     svc #0
-    
+
     ldr x0, =current_status
     mov w1, #404
     str w1, [x0]
@@ -1530,6 +1658,34 @@ send_429:
     mov w1, #429
     str w1, [x0]
     bl log_request
+    b hc_close_final
+
+send_server_status:
+    mov x0, x20
+    ldr x1, =http_status_200
+    ldr x2, =len_status_200
+    mov x8, SYS_WRITE
+    svc #0
+
+    mov x0, x20
+    ldr x1, =server_status_hdr
+    ldr x2, =len_server_status_hdr
+    mov x8, SYS_WRITE
+    svc #0
+
+    mov x0, x20
+    ldr x1, =server_status_json
+    ldr x2, =len_server_status_json
+    mov x8, SYS_WRITE
+    svc #0
+
+    ldr x0, =current_status
+    mov w1, #200
+    str w1, [x0]
+    bl log_request
+
+    cmp x28, #1
+    beq hc_loop
     b hc_close_final
 
 hc_close_final:
@@ -1834,3 +1990,265 @@ dm_check_patch:
 dm_unknown:
     mov x0, #METHOD_UNKNOWN
     ret
+
+
+/* serve_dynamic_gzip: on-the-fly gzip via /bin/gzip child process.
+ * x20=client_fd, x21=file_fd, x25=mime_ptr, x26=mime_len, x28=keep_alive */
+serve_dynamic_gzip:
+    stp x29, x30, [sp, #-96]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
+
+    /* pipe2(gzip_pipe_fds, 0) */
+    ldr x0, =gzip_pipe_fds
+    mov x1, #0
+    mov x8, SYS_PIPE2
+    svc #0
+    cmp x0, #0
+    blt sdgz_fallback
+
+    ldr x0, =gzip_pipe_fds
+    ldr w23, [x0]               /* pipe_read */
+    ldr w24, [x0, #4]           /* pipe_write */
+
+    /* mmap 8KB stack for child */
+    mov x0, #0
+    mov x1, #8192
+    mov x2, #(PROT_READ|PROT_WRITE)
+    mov x3, #(MAP_PRIVATE|MAP_ANONYMOUS)
+    orr x3, x3, #MAP_STACK
+    mov x4, #-1
+    mov x5, #0
+    mov x8, SYS_MMAP
+    svc #0
+    cmp x0, #0
+    blt sdgz_close_pipe
+    add x27, x0, #8192
+
+    /* clone(SIGCHLD, stack_top) */
+    mov x0, #SIGCHLD_FLAG
+    mov x1, x27
+    mov x2, #0
+    mov x3, #0
+    mov x4, #0
+    mov x8, SYS_CLONE
+    svc #0
+    cmp x0, #0
+    blt sdgz_close_pipe
+    bne sdgz_parent
+
+    /* ---- CHILD ---- */
+    mov x0, x23
+    mov x8, SYS_CLOSE
+    svc #0
+    mov x0, x24
+    mov x1, #1
+    mov x2, #0
+    mov x8, SYS_DUP3
+    svc #0
+    mov x0, x21
+    mov x1, #0
+    mov x2, #0
+    mov x8, SYS_DUP3
+    svc #0
+    sub sp, sp, #32
+    ldr x0, =gzip_arg0
+    str x0, [sp]
+    ldr x0, =gzip_argc
+    str x0, [sp, #8]
+    str xzr, [sp, #16]
+    ldr x0, =gzip_bin
+    mov x1, sp
+    mov x2, #0
+    mov x8, SYS_EXECVE
+    svc #0
+    mov x0, #1
+    mov x8, SYS_EXIT
+    svc #0
+
+sdgz_parent:
+    mov x19, x0                 /* child pid */
+    /* Close pipe_write and file_fd in parent */
+    mov x0, x24
+    mov x8, SYS_CLOSE
+    svc #0
+    mov x0, x21
+    mov x8, SYS_CLOSE
+    svc #0
+
+    /* HTTP/1.1 200 OK */
+    mov x0, x20
+    ldr x1, =http_status_200
+    ldr x2, =len_status_200
+    mov x8, SYS_WRITE
+    svc #0
+    /* Server header */
+    mov x0, x20
+    ldr x1, =http_server_hdr
+    ldr x2, =len_server_hdr
+    mov x8, SYS_WRITE
+    svc #0
+    /* Content-Type: <mime> */
+    mov x0, x20
+    ldr x1, =http_content_type
+    ldr x2, =len_content_type
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, x20
+    mov x1, x25
+    mov x2, x26
+    mov x8, SYS_WRITE
+    svc #0
+    /* "\r\n" after MIME value */
+    sub sp, sp, #16
+    mov w0, #0x0d
+    strb w0, [sp]
+    mov w0, #0x0a
+    strb w0, [sp, #1]
+    mov x0, x20
+    mov x1, sp
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    add sp, sp, #16
+    /* Content-Encoding: gzip + Transfer-Encoding: chunked */
+    mov x0, x20
+    ldr x1, =dgzip_ce_hdr
+    ldr x2, =dgzip_ce_len
+    mov x8, SYS_WRITE
+    svc #0
+    /* Connection */
+    cmp x28, #1
+    bne sdgz_conn_close
+    mov x0, x20
+    ldr x1, =http_conn_ka
+    ldr x2, =len_conn_ka
+    mov x8, SYS_WRITE
+    svc #0
+    b sdgz_end_headers
+sdgz_conn_close:
+    mov x0, x20
+    ldr x1, =http_conn_close_hdr
+    ldr x2, =len_conn_close_hdr
+    mov x8, SYS_WRITE
+    svc #0
+sdgz_end_headers:
+    /* blank line */
+    sub sp, sp, #16
+    mov w0, #0x0d
+    strb w0, [sp]
+    mov w0, #0x0a
+    strb w0, [sp, #1]
+    mov x0, x20
+    mov x1, sp
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    add sp, sp, #16
+
+sdgz_chunk_loop:
+    mov x0, x23
+    ldr x1, =gzip_chunk_buf
+    mov x2, #8192
+    mov x8, SYS_READ
+    svc #0
+    cmp x0, #0
+    ble sdgz_chunk_done
+    mov x22, x0
+    /* hex size + \r\n */
+    sub sp, sp, #32
+    mov x0, x22
+    mov x1, sp
+    bl itoa_hex
+    mov x2, x0
+    mov x0, x20
+    mov x1, sp
+    mov x8, SYS_WRITE
+    svc #0
+    add sp, sp, #32
+    sub sp, sp, #16
+    mov w0, #0x0d
+    strb w0, [sp]
+    mov w0, #0x0a
+    strb w0, [sp, #1]
+    mov x0, x20
+    mov x1, sp
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    add sp, sp, #16
+    /* chunk data */
+    mov x0, x20
+    ldr x1, =gzip_chunk_buf
+    mov x2, x22
+    mov x8, SYS_WRITE
+    svc #0
+    /* \r\n */
+    sub sp, sp, #16
+    mov w0, #0x0d
+    strb w0, [sp]
+    mov w0, #0x0a
+    strb w0, [sp, #1]
+    mov x0, x20
+    mov x1, sp
+    mov x2, #2
+    mov x8, SYS_WRITE
+    svc #0
+    add sp, sp, #16
+    b sdgz_chunk_loop
+
+sdgz_chunk_done:
+    /* "0\r\n\r\n" */
+    mov x0, x20
+    ldr x1, =dgzip_final_chunk
+    ldr x2, =dgzip_final_len
+    mov x8, SYS_WRITE
+    svc #0
+    /* close pipe_read */
+    mov x0, x23
+    mov x8, SYS_CLOSE
+    svc #0
+    /* wait for child */
+    sub sp, sp, #16
+    mov x0, x19
+    mov x1, sp
+    mov x2, #0
+    mov x3, #0
+    mov x8, SYS_WAIT4
+    svc #0
+    add sp, sp, #16
+    /* log */
+    ldr x0, =current_status
+    mov w1, #200
+    str w1, [x0]
+    bl log_request
+
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #96
+    cmp x28, #1
+    beq hc_loop
+    b hc_close_final
+
+sdgz_close_pipe:
+    mov x0, x23
+    mov x8, SYS_CLOSE
+    svc #0
+    mov x0, x24
+    mov x8, SYS_CLOSE
+    svc #0
+sdgz_fallback:
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #96
+    b send_response

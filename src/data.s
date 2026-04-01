@@ -387,7 +387,7 @@
     .global http_accept_ranges, len_accept_ranges
 
     /* Range request support */
-    str_range_header: .ascii "Range: bytes="
+    str_range_header: .asciz "Range: bytes="
     len_range_header = . - str_range_header
     .global str_range_header, len_range_header
 
@@ -670,12 +670,25 @@
     .global matched_location
     .global has_range_request, range_start, range_end
     .global log_buffer2
+    .global gzip_chunk_buf, gzip_pipe_fds
 
 .data
     log_combined_dash:  .asciz " - - ["
     log_combined_proto: .asciz " HTTP/1.1\" "
     log_combined_end:   .asciz " -\n"
     .global log_combined_dash, log_combined_proto, log_combined_end
+    /* Dynamic gzip helpers */
+    dgzip_ce_hdr:   .ascii "Content-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n"
+    dgzip_ce_len = . - dgzip_ce_hdr
+    .global dgzip_ce_hdr, dgzip_ce_len
+    dgzip_chunk_end: .ascii "\r\n"
+    dgzip_final_chunk: .ascii "0\r\n\r\n"
+    dgzip_final_len = . - dgzip_final_chunk
+    .global dgzip_chunk_end, dgzip_final_chunk, dgzip_final_len
+    gzip_bin:   .asciz "/bin/gzip"
+    gzip_arg0:  .asciz "/bin/gzip"
+    gzip_argc:  .asciz "-c"
+    .global gzip_bin, gzip_arg0, gzip_argc
     log_fd:         .word 1     /* Default to stdout (1) */
 
 /* Worker stack - each worker gets 64KB stack */
