@@ -630,6 +630,10 @@
     gzip_path_buf:  .skip 2048
     matched_location: .skip 8
     reload_requested: .skip 4
+    has_range_request: .skip 4
+    .align 8
+    range_start: .skip 8
+    range_end: .skip 8
     .align 8
     accept_mutex_ptr: .skip 8   /* pointer to shared mmap region for accept mutex */
 
@@ -648,6 +652,7 @@
     .global client_accepts_gzip, serving_gzip, gzip_path_buf
     .global reload_requested
     .global matched_location
+    .global has_range_request, range_start, range_end
     .global log_buffer2
 
 .data
