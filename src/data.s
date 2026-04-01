@@ -144,6 +144,10 @@
     flag_vers_long: .asciz "--version"
     flag_silent_long:.asciz "--silent"
     flag_daemon_long:.asciz "--daemon"
+    flag_t:         .asciz "-t"
+    flag_test_long: .asciz "--test"
+    is_test_mode:   .word 0
+    .global flag_t, flag_test_long, is_test_mode
 
     /* Messages */
     msg_port:       .ascii " \x1b[1;32m[LISTEN]\x1b[0m Port: \x1b[1;33m"
@@ -161,6 +165,10 @@
     
     msg_daemon:     .ascii " \x1b[1;36m[SYSTEM]\x1b[0m Running in background (Daemon)...\n"
     len_msg_daemon = . - msg_daemon
+
+    msg_test_ok:    .ascii "\x1b[1;32m[OK]\x1b[0m Configuration test successful\n"
+    len_test_ok = . - msg_test_ok
+    .global msg_test_ok, len_test_ok
 
     msg_newline:    .ascii "\x1b[0m\n"
     slash_newline:  .ascii "/\r\n\r\n"
@@ -234,7 +242,10 @@
     
     http_status_200: .ascii "HTTP/1.1 200 OK\r\n"
     len_status_200 = . - http_status_200
-    
+
+    /* http_status_404 is defined in error.s; just define the length alias */
+    .equ len_status_404, 24
+
     http_conn_ka: .ascii "Connection: keep-alive\r\n"
     len_conn_ka = . - http_conn_ka
     
@@ -360,6 +371,28 @@
     http_accept_ranges: .ascii "\r\nAccept-Ranges: bytes"
     len_accept_ranges = . - http_accept_ranges
     .global http_accept_ranges, len_accept_ranges
+
+    /* Range request support */
+    str_range_header: .ascii "Range: bytes="
+    len_range_header = . - str_range_header
+    .global str_range_header, len_range_header
+
+    http_206: .ascii "HTTP/1.1 206 Partial Content\r\n"
+    len_206 = . - http_206
+    .global http_206, len_206
+
+    /* Leading \r\n terminates the Content-Type value line */
+    http_content_range: .ascii "\r\nContent-Range: bytes "
+    len_content_range = . - http_content_range
+    .global http_content_range, len_content_range
+
+    http_416: .ascii "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nContent-Range: bytes */0\r\n\r\n"
+    len_416 = . - http_416
+    .global http_416, len_416
+
+    str_dash: .ascii "-"
+    str_slash: .ascii "/"
+    .global str_dash, str_slash
 
     dotdot:         .asciz ".."
     str_get:        .asciz "GET"
@@ -568,6 +601,7 @@
     config_buffer:  .skip 8192
     stat_buffer:    .skip 128
     log_buffer:     .skip 512
+    log_buffer2:    .skip 1024   /* nginx combined log format buffer */
     client_ip_str:  .skip 32
     time_buffer:    .skip 32
     epoll_events:   .skip 512
@@ -596,7 +630,10 @@
     gzip_path_buf:  .skip 2048
     matched_location: .skip 8
     reload_requested: .skip 4
-    
+    .align 8
+    accept_mutex_ptr: .skip 8   /* pointer to shared mmap region for accept mutex */
+
+    .global accept_mutex_ptr
     .global current_status
     .global current_method
     .global access_log_path
@@ -611,8 +648,13 @@
     .global client_accepts_gzip, serving_gzip, gzip_path_buf
     .global reload_requested
     .global matched_location
+    .global log_buffer2
 
 .data
+    log_combined_dash:  .asciz " - - ["
+    log_combined_proto: .asciz " HTTP/1.1\" "
+    log_combined_end:   .asciz " -\n"
+    .global log_combined_dash, log_combined_proto, log_combined_end
     log_fd:         .word 1     /* Default to stdout (1) */
 
 /* Worker stack - each worker gets 64KB stack */

@@ -154,7 +154,20 @@ parse_cli_loop:
     bl strcmp
     cmp x0, #0
     beq handle_daemon
-    
+
+    /* Check -t / --test */
+    mov x0, x22
+    ldr x1, =flag_t
+    bl strcmp
+    cmp x0, #0
+    beq handle_t
+
+    mov x0, x22
+    ldr x1, =flag_test_long
+    bl strcmp
+    cmp x0, #0
+    beq handle_t
+
     /* Check if Positional Arg (Does not start with -) */
     ldrb w0, [x22]
     cmp w0, #'-'
@@ -226,6 +239,13 @@ handle_s:
 
 handle_daemon:
     ldr x0, =is_daemon
+    mov w1, #1
+    str w1, [x0]
+    add x21, x21, #1
+    b parse_cli_loop
+
+handle_t:
+    ldr x0, =is_test_mode
     mov w1, #1
     str w1, [x0]
     add x21, x21, #1
@@ -359,6 +379,21 @@ start_server_label:
     mov x8, SYS_WRITE
     svc #0
 
+    /* Check Test Mode */
+    ldr x0, =is_test_mode
+    ldr w0, [x0]
+    cbz w0, skip_test_mode
+
+    mov x0, STDOUT
+    ldr x1, =msg_test_ok
+    ldr x2, =len_test_ok
+    mov x8, SYS_WRITE
+    svc #0
+    mov x0, #0
+    mov x8, SYS_EXIT
+    svc #0
+
+skip_test_mode:
     /* Check Daemon */
     ldr x0, =is_daemon
     ldr w0, [x0]
@@ -419,13 +454,39 @@ pid_fail:
     ldr w20, [x0]           /* x20 = number of workers to fork */
     mov x21, #0              /* x21 = worker index */
 
+    /* Allocate shared page for accept mutex (MAP_SHARED|MAP_ANONYMOUS) */
+    mov x0, #0
+    mov x1, #4096
+    mov x2, #(PROT_READ|PROT_WRITE)
+    mov x3, #(MAP_SHARED|MAP_ANONYMOUS)
+    mov x4, #-1
+    mov x5, #0
+    mov x8, SYS_MMAP
+    svc #0
+    ldr x1, =accept_mutex_ptr
+    str x0, [x1]
+
 fork_workers:
     cmp w21, w20
     bge master_loop          /* All workers forked, go to master */
-    
-    /* clone(SIGCHLD, 0, 0, 0, 0) - equivalent to fork() on aarch64 */
+
+    /* Allocate private 64KB stack for this worker */
+    mov x0, #0
+    mov x1, #65536
+    mov x2, #(PROT_READ|PROT_WRITE)
+    mov x3, #(MAP_PRIVATE|MAP_ANONYMOUS)  /* 0x22 */
+    orr x3, x3, #MAP_STACK               /* | 0x20000 */
+    mov x4, #-1
+    mov x5, #0
+    mov x8, SYS_MMAP
+    svc #0
+    cmp x0, #0
+    blt fork_failed          /* mmap failed, skip this worker */
+    add x1, x0, #65536       /* stack_top = base + 65536 (stack grows down) */
+
+    /* clone(SIGCHLD, stack_top, 0, 0, 0) */
     mov x0, #SIGCHLD_FLAG    /* SIGCHLD */
-    mov x1, #0               /* stack = NULL (use parent's) */
+    /* x1 = stack_top (already set above) */
     mov x2, #0               /* parent_tid */
     mov x3, #0               /* tls */
     mov x4, #0               /* child_tid */
@@ -486,9 +547,23 @@ find_slot:
     b find_slot
 
 respawn_worker:
-    /* clone(SIGCHLD, 0, 0, 0, 0) - fork a replacement worker */
+    /* Allocate private 64KB stack for the replacement worker */
+    mov x0, #0
+    mov x1, #65536
+    mov x2, #(PROT_READ|PROT_WRITE)
+    mov x3, #(MAP_PRIVATE|MAP_ANONYMOUS)  /* 0x22 */
+    orr x3, x3, #MAP_STACK               /* | 0x20000 */
+    mov x4, #-1
+    mov x5, #0
+    mov x8, SYS_MMAP
+    svc #0
+    cmp x0, #0
+    blt respawn_skip         /* mmap failed, skip respawn */
+    add x1, x0, #65536       /* stack_top = base + 65536 */
+
+    /* clone(SIGCHLD, stack_top, 0, 0, 0) - fork a replacement worker */
     mov x0, #SIGCHLD_FLAG
-    mov x1, #0
+    /* x1 = stack_top (already set above) */
     mov x2, #0
     mov x3, #0
     mov x4, #0

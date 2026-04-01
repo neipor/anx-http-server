@@ -272,7 +272,30 @@ rv_loop_l:
     b rv_loop_l
 rv_dn_l: ret
 
-/* itoa_hex(uint64 val, char* buf) -> len */
+/* itoa_pad2(uint64 val, char* buf) -> len
+ * Writes val as exactly 2 decimal digits (zero-padded), returns 2 */
+.global itoa_pad2
+itoa_pad2:
+    cmp x0, #10
+    bge ip2_two_digits
+    mov w2, #'0'
+    strb w2, [x1]           /* tens digit = '0' */
+    add w2, w0, #'0'
+    strb w2, [x1, #1]       /* ones digit */
+    mov x0, #2
+    ret
+ip2_two_digits:
+    mov x3, #10
+    udiv x4, x0, x3         /* tens = val / 10 */
+    msub x5, x4, x3, x0     /* ones = val % 10 */
+    add w4, w4, #'0'
+    add w5, w5, #'0'
+    strb w4, [x1]
+    strb w5, [x1, #1]
+    mov x0, #2
+    ret
+
+
 itoa_hex:
     mov x2, x1
     mov x3, x0

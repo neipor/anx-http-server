@@ -95,3 +95,13 @@
 
 /* Clone Flags */
 .equ SIGCHLD_FLAG, 17     /* Exit signal for clone */
+
+/* Mmap */
+.equ SYS_MMAP, 222
+.equ SYS_SCHED_YIELD, 124
+.equ PROT_READ, 1
+.equ PROT_WRITE, 2
+.equ MAP_SHARED, 0x01
+.equ MAP_PRIVATE, 0x02
+.equ MAP_ANONYMOUS, 0x20
+.equ MAP_STACK, 0x20000

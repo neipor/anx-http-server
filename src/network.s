@@ -102,12 +102,9 @@ accept_loop:
 
 worker_routine:
     /* Worker process starts here after fork() */
-    /* Each worker has its own copy of all memory (COW) */
-    
-    /* IMPORTANT: Set up stack frame first! */
-    /* The worker enters via branch, not call, so no stack frame exists */
-    ldr x28, =worker_stack_end   /* Use dedicated worker stack */
-    sub sp, x28, #32             /* Leave padding for alignment */
+    /* sp is already set to the private stack top by clone() */
+
+    /* Set up stack frame */
     stp x29, x30, [sp, #-16]!
     mov x29, sp
     
@@ -189,6 +186,9 @@ epoll_ctl_ok:
     add sp, sp, #16
     
 epoll_loop:
+    /* Acquire accept mutex to avoid thundering herd */
+    bl lock_accept_mutex
+
     /* Blocking accept - each worker handles one connection at a time
      * Combined with multi-worker prefork model, this is the same
      * architecture as nginx (worker_connections handled via fork) */
@@ -209,14 +209,18 @@ epoll_loop:
     
     mov x25, x0             /* client_fd */
     add sp, sp, #32         /* Restore stack */
-    
+
+    /* Release accept mutex before handling client */
+    bl unlock_accept_mutex
+
     /* Handle the client */
     mov x0, x25
     bl handle_client
     b epoll_loop
-    
+
 accept_retry:
     add sp, sp, #32
+    bl unlock_accept_mutex
     mov x26, #EINTR
     neg x26, x26
     cmp x0, x26
@@ -232,6 +236,36 @@ worker_exit:
     mov x0, #1
     mov x8, SYS_EXIT
     svc #0
+
+/* lock_accept_mutex() - spin-lock using LDAXR/STLXR, yield when contended */
+lock_accept_mutex:
+    ldr x9, =accept_mutex_ptr
+    ldr x9, [x9]            /* shared page ptr */
+    cbz x9, .Llock_skip     /* no mutex allocated, skip */
+.Llock_loop:
+    ldaxr w10, [x9]         /* load exclusive with acquire barrier */
+    cbnz w10, .Llock_wait   /* already locked - wait */
+    mov w10, #1
+    stlxr w11, w10, [x9]   /* store exclusive with release barrier */
+    cbnz w11, .Llock_loop   /* store failed (another CPU grabbed it) - retry */
+.Llock_skip:
+    ret
+.Llock_wait:
+    clrex                   /* clear exclusive monitor */
+    mov x8, #SYS_SCHED_YIELD
+    svc #0
+    ldr x9, =accept_mutex_ptr   /* reload after syscall */
+    ldr x9, [x9]
+    b .Llock_loop
+
+/* unlock_accept_mutex() - store-release 0 to release the mutex */
+unlock_accept_mutex:
+    ldr x9, =accept_mutex_ptr
+    ldr x9, [x9]
+    cbz x9, .Lunlock_skip
+    stlr wzr, [x9]          /* store-release zero */
+.Lunlock_skip:
+    ret
 
 /* connect_to_upstream() -> upstream_fd or -1 */
 connect_to_upstream:
