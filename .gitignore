@@ -6,3 +6,8 @@ server.log.*
 server.pid
 monitor.log
 nohup.out
+
+# Test results and logs
+tests/results/
+tests/utils/results/
+tests/data/

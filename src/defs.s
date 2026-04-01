@@ -33,6 +33,7 @@
 .equ SYS_ACCEPT4, 242
 .equ SYS_SETSOCKOPT, 208
 .equ SYS_CLONE, 220
+.equ SYS_FORK, 107
 .equ SYS_WAIT4, 260
 
 /* Fcntl */
@@ -90,6 +91,17 @@
 .equ SIGPIPE, 13
 .equ SIG_IGN, 1
 .equ EINTR, 4
+.equ EAGAIN, 11
 
 /* Clone Flags */
 .equ SIGCHLD_FLAG, 17     /* Exit signal for clone */
+
+/* Mmap */
+.equ SYS_MMAP, 222
+.equ SYS_SCHED_YIELD, 124
+.equ PROT_READ, 1
+.equ PROT_WRITE, 2
+.equ MAP_SHARED, 0x01
+.equ MAP_PRIVATE, 0x02
+.equ MAP_ANONYMOUS, 0x20
+.equ MAP_STACK, 0x20000

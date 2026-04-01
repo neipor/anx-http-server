@@ -1,27 +1,47 @@
-# AArch64 Assembly HTTP Server
+# ANX — AArch64 Assembly HTTP Server
 
-A high-performance, concurrent web server written entirely in AArch64 Assembly for Linux. No C library (libc), no external dependencies. Just raw syscalls.
+A production-grade, high-performance web server written entirely in AArch64 assembly for Linux. No C library, no external dependencies — just raw syscalls. Aims for full nginx-level feature parity in a ~230 KB static binary.
 
 ## Features
 
-- **Pure Assembly**: Written in GNU Assembler (GAS) for AArch64.
-- **Concurrent**: Uses `fork` (via `clone` syscall) to handle multiple clients simultaneously.
-- **Zero-Copy Serving**: Uses `sendfile` syscall for high-performance static file delivery.
-- **MIME Support**: Automatically detects and sets Content-Type for `.html`, `.css`, `.js`, `.png`, `.jpg`.
-- **Directory Listing**: Auto-generates HTML indexes for directories.
-- **Reverse Proxy**: Can forward requests to an upstream backend (IP-based).
-- **Configuration**: Supports CLI flags and a configuration file.
+| Feature | Status |
+|---|---|
+| HTTP/1.1 (GET, HEAD, OPTIONS, POST) | ✅ |
+| Zero-copy static file serving (`sendfile`) | ✅ |
+| 30+ MIME types | ✅ |
+| Directory listing | ✅ |
+| ETag / 304 Not Modified | ✅ |
+| Range requests / 206 Partial Content | ✅ |
+| Gzip compression (static `.gz` + dynamic pipe) | ✅ |
+| Keep-alive with configurable timeout | ✅ |
+| Multi-worker prefork (auto CPU count) | ✅ |
+| Accept mutex (no thundering herd) | ✅ |
+| Nginx-style config parser (`server{}`, `location{}`) | ✅ |
+| Location routing (prefix + exact match) | ✅ |
+| `try_files` directive | ✅ |
+| Custom error pages (`error_page 404 /404.html`) | ✅ |
+| IP access control (allow/deny with CIDR) | ✅ |
+| Token-bucket rate limiting | ✅ |
+| Reverse proxy | ✅ |
+| CGI execution | ✅ |
+| WebSocket upgrade | ✅ |
+| Nginx combined access log (file + colorized console) | ✅ |
+| `/server-status` JSON endpoint (live request counter) | ✅ |
+| Graceful reload (`kill -HUP <pid>`) | ✅ |
+| Log rotation (`kill -USR1 <pid>`) | ✅ |
+| `return` directive (301/302/307 redirects) | ✅ |
+| `add_header` directive (custom response headers) | ✅ |
+| `expires` directive (Cache-Control header) | ✅ |
+| `gzip_min_length` (skip compression for small files) | ✅ |
+| `server_tokens off` (hide Server header) | ✅ |
+| X-Forwarded-For in reverse proxy mode | ✅ |
+| PID file | ✅ |
+| Config test (`-t` / `--test`) | ✅ |
+| Systemd service file | ✅ |
+| HTTP/2 framework | 🚧 |
+| io_uring async I/O | 🚧 |
 
-## Architecture
-
-- **`src/main.s`**: Entry point, argument parsing.
-- **`src/network.s`**: Socket creation, binding, listening, and connection handling.
-- **`src/http.s`**: HTTP request parsing, response generation, proxy logic.
-- **`src/utils.s`**: String manipulation, integer conversion, memory helpers.
-- **`src/config.s`**: Config file parser.
-- **`src/data.s`**: Global constants and buffers.
-
-## Usage
+## Quick Start
 
 ### Build
 ```bash
@@ -30,73 +50,147 @@ make
 
 ### Run
 ```bash
-# Start on default port 8080 serving ./www
-./build/anx_asm_demo
+# Serve ./www on port 8080 with 4 workers
+./build/anx
 
-# Start on port 8099 serving /var/www
-./build/anx_asm_demo -p 8099 -d /var/www
+# Custom port and document root
+./build/anx -p 8099 -d /var/www/html
 
-# Start with Config File
-./build/anx_asm_demo -c configs/anx.conf
+# Nginx-style config file
+./build/anx -n configs/anx.conf
+
+# Test config without starting
+./build/anx -t -n configs/anx.conf
+
+# Reverse proxy to upstream
+./build/anx -x
 ```
 
-### Reverse Proxy Mode
-To enable the reverse proxy (forwarding to `127.0.0.1:9005`):
+### Install (systemd)
 ```bash
-./build/anx_asm_demo -x
+sudo make install       # installs to /usr/local/bin/anx + systemd unit
+sudo systemctl enable --now anx
 ```
-Useful for forwarding requests to an application server (e.g., Python, Node.js).
 
-## Configuration File (`anx.conf`)
-```ini
-port=8080
-root=./www
+## Nginx-Style Config
+```nginx
+worker_processes auto;
+pid /run/anx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+server {
+    listen 8080;
+    server_name example.com;
+    root /var/www/html;
+    index index.html;
+    access_log /var/log/anx/access.log;
+    error_page 404 /404.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location /api {
+        allow 192.168.1.0/24;
+        deny all;
+    }
+}
+```
+
+## CLI Flags
+
+| Flag | Description |
+|---|---|
+| `-p <port>` | Listen port (default: 8080) |
+| `-d <dir>` | Document root (default: ./www) |
+| `-w <n>` | Worker count (default: CPU count) |
+| `-c <file>` | ANX config file |
+| `-n <file>` | Nginx-style config file |
+| `-t` / `--test` | Test config and exit |
+| `-x` | Enable reverse proxy mode |
+| `-s` | Silent mode (no console log) |
+| `-v` | Print version and exit |
+
+## Architecture
+
+```
+src/
+├── main.s          Entry point, CLI, worker lifecycle, SIGHUP reload
+├── network.s       Socket setup, accept loop, accept mutex (LDAXR/STLXR)
+├── http.s          HTTP parsing, routing, file serving, gzip, Range, CGI
+├── utils.s         String ops, logging (nginx combined format), date
+├── data.s          Global strings, BSS buffers
+├── config.s        ANX config parser (key=value)
+├── config_nginx.s  Nginx-style block config parser
+├── location.s      Location routing (longest prefix match, 16 locations)
+├── access.s        IP allow/deny + token-bucket rate limiter
+├── cgi.s           CGI execution via pipe+fork+execve
+├── error.s         Custom error page lookup
+├── listing.s       Directory listing HTML generator
+├── defs.s          Syscall numbers and constants
+├── version.s       Version string (auto-generated by make)
+├── core/           Memory pool, SIMD helpers
+├── io/             io_uring framework
+├── protocol/
+│   ├── http2/      HTTP/2 (HPACK, streams, flow control) — framework
+│   └── websocket/  WebSocket handshake + frames
+└── crypto/
+    ├── sha1.s      SHA-1 (RFC 3174)
+    └── base64.s    Base64 encode/decode (RFC 4648)
 ```
 
 ## Syscalls Used
-- `socket`, `bind`, `listen`, `accept`, `connect`
-- `read`, `write`, `openat`, `close`
-- `sendfile`
-- `clone` (fork), `wait4` (via signal handling)
-- `getdents64`
-- `exit`
+`socket` · `bind` · `listen` · `accept4` · `connect` · `read` · `write` · `openat` · `close` · `sendfile` · `clone` · `wait4` · `getdents64` · `mmap` · `mprotect` · `sched_yield` · `pipe2` · `dup3` · `execve` · `kill` · `setsockopt` · `epoll_create1` · `epoll_ctl` · `epoll_pwait` · `newfstatat` · `exit_group`
 
 ## License
 MIT
 
 ## Version History
 
-### v0.3.0-dev (Current)
-**WebSocket Handshake + SHA1 + Base64**
+### v0.5.1 (Current)
+**Stability & Completeness Pass**
 
-- SHA-1 hash algorithm (RFC 3174) - 80 rounds, pure assembly
-- Base64 encoding/decoding (RFC 4648) - scalar + NEON
-- Complete WebSocket handshake (RFC 6455)
-  - Sec-WebSocket-Key extraction
-  - Accept key generation: BASE64(SHA1(key + magic))
-- ~9,000 lines of pure AArch64 assembly
+- Range/206: fixed `.asciz` null-termination for header matching; fixed double-CRLF header corruption
+- Dynamic gzip: pipe2+clone+execve `/bin/gzip -c`; chunked Transfer-Encoding
+- Nginx combined access log: dual output (colorized console + log file)
+- Worker stack isolation: per-worker private 64 KB mmap stack
+- Accept mutex: LDAXR/STLXR thundering-herd prevention
+- Keep-alive timeout via `SO_RCVTIMEO`
+- `/server-status` JSON endpoint
+- `-t`/`--test` config validation flag
+- Custom error pages via `error_page` directive
+- PID file management
+- Fixed `beq` out-of-range conditional branch (> ±1 MB)
+
+### v0.5.0
+**Production-Grade Nginx-Compatible Server**
+
+- 30+ MIME types; access logging fixed
+- Multi-worker prefork (SO_REUSEPORT + epoll)
+- Nginx-style config parser (server{}/location{}/events{})
+- Location routing, try_files, custom error pages
+- HEAD/OPTIONS/405 Method Not Allowed
+- Date header, ETag/304, graceful reload (SIGHUP)
+- Gzip static file serving, IP allow/deny, rate limiting
+- Systemd service, PID file, make install
+
+### v0.4.0-dev
+HTTP/2 framework, HPACK, SIMD, io_uring framework (~13,000 lines)
+
+### v0.3.0-dev
+WebSocket handshake, SHA-1, Base64 (~9,000 lines)
 
 ### v0.2.0-beta
-**HTTP/2 Core + SIMD Optimizations**
-
-- HTTP/2 connection management (RFC 7540)
-- Stream state machine with 1000 concurrent streams  
-- Flow control (connection + stream level)
-- SIMD memory operations: 30-60 GB/s throughput
-- io_uring framework for async I/O
-- ~8,000 lines of pure AArch64 assembly
+HTTP/2 core, stream multiplexing, SIMD memory ops (~8,000 lines)
 
 ### v0.1.0-alpha
-**Architecture Refactor**
+Modular architecture refactor (~6,250 lines)
 
-- Modular architecture (core/, io/, protocol/)
-- Memory pool management
-- I/O engine abstraction  
-- WebSocket frame handling
-- ~6,250 lines of assembly
-
-### v0.0.x (Original)
-Initial HTTP/1.1 server implementation
+### v0.0.x
+Initial HTTP/1.1 server
 
 ---
 

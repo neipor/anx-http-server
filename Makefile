@@ -1,4 +1,4 @@
-# Makefile for ANX Web Server v0.1.0-alpha
+# Makefile for ANX Web Server v0.5.0
 # High-Performance AArch64 Assembly HTTP/1.1 + HTTP/2 + WebSocket Server
 
 # Toolchain
@@ -9,9 +9,9 @@ LDFLAGS = -static
 
 # Version
 VERSION_MAJOR = 0
-VERSION_MINOR = 3
+VERSION_MINOR = 6
 VERSION_PATCH = 0
-VERSION_STAGE = dev
+VERSION_STAGE = release
 
 # Directories
 SRC_DIR = src
@@ -19,11 +19,12 @@ BUILD_DIR = build
 TEST_DIR = tests
 
 # Source files (note: frames.s is included by connection.s, not compiled separately)
-SRCS = config.s data.s listing.s http.s main.s network.s utils.s i18n.s cgi.s error.s \
-       protocol/http2/connection.s protocol/http2/streams.s protocol/http2/hpack.s \
+SRCS = config.s config_nginx.s data.s listing.s http.s main.s network.s utils.s i18n.s cgi.s error.s \
+       location.s access.s \
+       protocol/http2/connection.s protocol/http2/streams.s protocol/http2/hpack.s protocol/http2/hpack_impl.s protocol/http2/hpack_dynamic.s protocol/http2/hpack_encode.s protocol/http2/hpack_decode.s protocol/http2/handler.s protocol/http2/response.s protocol/http2/h2_request.s protocol/http2/h2_response.s \
        protocol/websocket/frames.s protocol/websocket/handshake.s \
-       core/memory.s core/simd.s \
-       io/engine.s io/uring.s \
+       core/memory.s core/simd.s core/simd_wrapper.s \
+       io/engine.s io/uring.s io/uring_impl.s io/uring_submit.s \
        crypto/sha1.s crypto/base64.s
 
 # Objects
@@ -33,7 +34,7 @@ OBJS = $(patsubst %.s,$(BUILD_DIR)/%.o,$(SRCS))
 TARGET = $(BUILD_DIR)/anx
 
 # Phony targets
-.PHONY: all clean test release check
+.PHONY: all clean test release check install uninstall
 
 # Default target
 all: $(TARGET)
@@ -122,3 +123,18 @@ help:
 	@echo "  help     - Show this help"
 	@echo ""
 	@echo "Version: v$(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PATCH)-$(VERSION_STAGE)"
+
+# Install targets
+install: $(TARGET)
+	install -d $(DESTDIR)/usr/local/bin
+	install -d $(DESTDIR)/etc/anx
+	install -d $(DESTDIR)/var/log/anx
+	install -d $(DESTDIR)/var/www/html
+	install -m 755 $(TARGET) $(DESTDIR)/usr/local/bin/anx
+	install -m 644 configs/nginx.conf $(DESTDIR)/etc/anx/anx.conf
+	install -m 644 configs/anx.service $(DESTDIR)/usr/lib/systemd/system/anx.service
+
+uninstall:
+	rm -f $(DESTDIR)/usr/local/bin/anx
+	rm -f $(DESTDIR)/etc/anx/anx.conf
+	rm -f $(DESTDIR)/usr/lib/systemd/system/anx.service

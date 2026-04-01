@@ -1,0 +1,17 @@
+[Unit]
+Description=ANX High-Performance AArch64 Web Server
+After=network.target
+
+[Service]
+Type=forking
+PIDFile=/run/anx.pid
+ExecStartPre=/usr/local/bin/anx -t
+ExecStart=/usr/local/bin/anx -n /etc/anx/anx.conf --daemon
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

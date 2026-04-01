@@ -83,11 +83,8 @@ mem_pool_free:
     stp     x29, x30, [sp, #-16]!
     mov     x29, sp
     
-    /* Use munmap to free */
-    mov     x2, x1                  /* length */
-    mov     x1, x0                  /* addr */
-    mov     x0, x1
-    mov     x1, x2
+    /* x0 = ptr, x1 = size */
+    /* x0 already has addr, x1 already has length */
     mov     x8, #215                /* SYS_MUNMAP */
     svc     #0
     
@@ -195,9 +192,10 @@ buf_destroy_done:
  * Returns: x0 = 0 on success, error code on failure
  */
 mem_buffer_resize:
-    stp     x29, x30, [sp, #-32]!
+    stp     x29, x30, [sp, #-48]!
     mov     x29, sp
     stp     x19, x20, [sp, #16]
+    stp     x21, x22, [sp, #32]
     
     mov     x19, x0                 /* Buffer pointer */
     mov     x20, x1                 /* New size */
@@ -216,14 +214,11 @@ mem_buffer_resize:
     mov     x21, x0                 /* New buffer */
     
     /* Copy old data */
+    mov     x0, x21                 /* dest = new buffer */
     ldr     x1, [x19]               /* Old data pointer */
     ldr     x2, [x19, #16]          /* Current length */
     cmp     x2, x20
     csel    x2, x2, x20, le         /* Copy min(len, new_size) */
-    
-    /* memcpy(new_buf, old_buf, copy_len) */
-    mov     x22, x0                 /* Save new buffer */
-    mov     x0, x21
     bl      memcpy
     
     /* Free old buffer */
@@ -243,8 +238,9 @@ resize_fail:
     mov     x0, #ERR_NOMEM
 
 resize_done:
+    ldp     x21, x22, [sp, #32]
     ldp     x19, x20, [sp, #16]
-    ldp     x29, x30, [sp], #32
+    ldp     x29, x30, [sp], #48
     ret
 
 /* ========================================================================

@@ -47,7 +47,7 @@ cleanup() {
     fi
     pkill -f anx 2>/dev/null || true
     rm -rf "$TEST_WWW"
-    rm -f "$LOG_FILE"
+    # rm -f "$LOG_FILE"
 }
 
 # Setup test environment
@@ -159,7 +159,7 @@ test_static_files() {
 test_directory_listing() {
     log_info "Testing directory listing..."
     
-    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/)
+    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$PORT/subdir/)
     if [ "$RESP" == "200" ]; then
         log_pass "Directory listing works"
     else
@@ -167,7 +167,7 @@ test_directory_listing() {
     fi
     
     # Check if response contains HTML
-    CONTENT=$(curl -s http://localhost:$PORT/)
+    CONTENT=$(curl -s http://localhost:$PORT/subdir/)
     if echo "$CONTENT" | grep -q "<html>"; then
         log_pass "Directory listing returns HTML"
     else
