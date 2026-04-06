@@ -1,6 +1,20 @@
 # ANX — AArch64 Assembly HTTP Server
 
-A production-grade, high-performance web server written entirely in AArch64 assembly for Linux. No C library, no external dependencies — just raw syscalls. Aims for full nginx-level feature parity in a ~230 KB static binary.
+<p align="center">
+  <img src="https://img.shields.io/badge/version-v0.6.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/language-AArch64_Assembly-orange" alt="language">
+  <img src="https://img.shields.io/badge/binary_size-~230KB-green" alt="size">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-red" alt="license">
+  <img src="https://img.shields.io/badge/platform-Linux_AArch64-lightgrey" alt="platform">
+</p>
+
+<p align="center">
+  <b>English</b> | <a href="#中文文档">中文</a>
+</p>
+
+---
+
+A production-grade, high-performance HTTP/1.1 web server written entirely in **pure AArch64 assembly** for Linux. Zero C library, zero external dependencies — raw syscalls only. Delivers nginx-level feature parity in a **~230 KB static binary**.
 
 ## Features
 
