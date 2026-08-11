@@ -147,17 +147,23 @@ the cache. Multi-file eviction soak (500 unique files, 16-way churn, 256 slots):
 |----------|-----|-------------|-------------|------|
 | index.html (3B) | **15.7k rps** | 10.4k | 16.2k | beats stock, ties tuned |
 | f16k.bin (16KB)  | **12.5k rps** (c300) | 10.5k | — | beats nginx at every concurrency |
-| f1m.bin (1MB)    | 1.2k→0.8k (c8→c300) | 1.08k | — | wins at low c; ~30% behind at c300 |
+| f1m.bin (1MB)    | 1.2k (c8) → 1.1k (c64) → 0.8k (c300) | 1.08k | — | wins at low c; mild gap at high c |
 | cached (≤8KB)    | **36 µs/req** | 71 µs/req | 56 µs/req | −49% vs stock |
 
 **Wins:** cached/small files and 16 KB sendfile at all concurrency levels.
-**Known frontier:** 1 MB bulk transfer at high concurrency degrades as connection
-count rises (single-connection bulk send briefly holds a worker); under 2 worker
-cores nginx stays flat ~1080 rps while ANX drops to ~780. Deep event-loop
-fairness tuning is the next optimization pass — not a correctness issue.
+**Known gap:** 1 MB bulk transfer at high concurrency still trails nginx ~12–30%
+(controlled back-to-back: anx 968 vs nginx 1102 rps @ c64). A 256 KB per-wakeup
+sendfile cap (`SF_CHUNK` in conn.s) lifted f1m c64 by +17%; the remainder is
+epoll-loop maturity, not a correctness/stability defect.
+
+**Security:** path traversal (`../`, encoded `%2e%2e`) is blocked; request-line and
+path are length-bounded (255 B); absurd `Content-Length` and Slowloris are
+absorbed (idle timeout) without crashing. No URL-decoding is performed (encoded
+URLs 404) — a correctness gap to close, not an exploitable hole.
 
 Stability: 300-connection soak at 17,890 rps, 14.4 ms p50 latency, **zero
-spin-storm events**. 18/18 probe-suite + 15/15 cache-probe checks pass.
+spin-storm events**; 120 s f1m @ c300 soak with **0 errors**, no RSS leak.
+18/18 probe-suite + 15/15 cache-probe checks pass.
 
 ## Architecture
 

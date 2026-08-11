@@ -54,6 +54,13 @@
 .equ EV_ERRMASK,       (EPOLLERR|EPOLLHUP)
 .equ IDLE_DEFAULT,     65
 
+/* Per-wakeup sendfile ceiling. cf_file pushes up to this many bytes per
+ * conn_flush call, then yields to the event loop even if the socket could
+ * take more. Keeps large transfers (>=256KB) from monopolizing a worker
+ * between epoll wakeups, improving fairness under many concurrent conns.
+ * 0 = unbounded (legacy single-shot behavior). */
+.equ SF_CHUNK,        262144   /* 256 KB */
+
 /* Fields local to conn.s, living in the reserved gap of the conn header
  * (offsets 96..127 are unused by the contract's layout). */
 .equ CONN_SCAN_OFF,     96      /* u32 absolute read_buf scan cursor       */
@@ -978,11 +985,6 @@ cf_head_err:
 cf_body:
     ldr w9, [x19, #CONN_FLAGS_OFF]
     tst w9, #CONN_F_FILE_BODY
-    bne cf_file
-    tst w9, #CONN_F_PTR_BODY
-    bne cf_ptr
-    b cf_finish
-
 /* ---- sendfile body ---- */
 cf_file:
     ldr x21, [x19, #CONN_FILE_REM_OFF]
@@ -993,11 +995,22 @@ cf_file:
     cmn w9, #1
     beq cf_finish
 
+    /* Cap the per-wakeup count at SF_CHUNK so a large transfer yields to the
+     * event loop after one chunk instead of draining the whole socket buffer
+     * (and starving other conns). Smaller of (remaining, SF_CHUNK). */
+    mov x3, x21                     /* count = remaining */
+    mov x4, #SF_CHUNK
+    cmp x21, x4
+    bge cf_use_cap
+    mov x3, x21
+    b cf_send
+cf_use_cap:
+    mov x3, x4
+cf_send:
     mov x0, x20                     /* out fd */
     mov w1, w9                      /* in fd  */
     mov x9, #CONN_FILE_OFF_OFF
     add x2, x19, x9                 /* &file_off, updated by the kernel */
-    mov x3, x21                     /* count */
     mov x8, SYS_SENDFILE
     svc #0
 

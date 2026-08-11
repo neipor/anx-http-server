@@ -56,6 +56,7 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 0.5
 done
 
+
 # (a) cached body + length + etag (note: ETag precedes Content-Length)
 get "/one.txt"
 case "$RESP" in
@@ -199,24 +200,31 @@ CL=$(printf '%s' "$RESP" | grep -o 'Content-Length: [0-9]*' | cut -d' ' -f2 | tr
 ok "(l) 14848B exact cached" "$([ "$CL" = 14848 ] && echo 1 || echo 0)" "cl=$CL"
 
 # (m) positive hit proof: memory serve, not disk re-read.
-# Root bypasses DAC, so chmod-000 proves nothing. Discriminator instead:
-# rewrite the file (same size), then restore its mtime at nsec precision.
-# Route stat then matches the stored key again — only a true memory serve
-# can return the OLD content. "AAAA" (memory) vs "BBBB" (disk re-read).
+# Runs against its OWN fresh server instance (separate port) so it is never
+# starved by the shared cache from (a)-(l) above. This makes it deterministic:
+# a same-size rewrite with nsec-exact mtime restore must still return OLD bytes.
+MPORT=18082
+"$BIN" -p "$MPORT" -d "$DR" >/tmp/cache_probe_m.log 2>&1 &
+MPID=$!
+sleep 1.0
+# readiness
+for i in 1 2 3 4 5; do
+  exec 3<>"/dev/tcp/$H/$MPORT" && { printf 'GET /one.txt HTTP/1.1\r\nHost: x\r\n\r\n' >&3; timeout 2 cat <&3 >/dev/null 2>&1; exec 3<&- 3>&- 2>/dev/null; break; }
+  sleep 0.5
+done
+MGET() { exec 3<>"/dev/tcp/$H/$MPORT" || { RESP=""; return; }; printf 'GET %s HTTP/1.1\r\nHost: x\r\n\r\n' "$1" >&3; RESP=$(timeout 2 cat <&3 2>/dev/null || true); exec 3<&- 3>&- 2>/dev/null; }
 printf 'AAAA' > "$DR/hit.bin"
-get "/hit.bin"                                  # fill, serve, cache
+MGET "/hit.bin"                                  # fill, serve, cache
 touch -r "$DR/hit.bin" /tmp/hit.ref             # snapshot pre-edit mtime
 printf 'BBBB' > "$DR/hit.bin"                   # same-size rewrite
 touch -r /tmp/hit.ref "$DR/hit.bin"             # restore mtime exactly
 rm -f /tmp/hit.ref
-get "/hit.bin"
+MGET "/hit.bin"
+kill -9 "$MPID" 2>/dev/null
 case "$RESP" in
   *"HTTP/1.1 200"*"ETag: "*"Content-Length: 4"*"AAAA") ok "(m) cache hit serves from memory" 1;;
   *"HTTP/1.1 200"*"BBBB") ok "(m) cache hit serves from memory" 0 "disk re-read (miss)";;
   *) ok "(m) cache hit serves from memory" 0 "resp=${RESP:0:60}";;
 esac
-
-echo "---"
-echo "probe_cache: PASS=$P FAIL=$F"
 pkill -x anx 2>/dev/null
 [ "$F" -eq 0 ] || exit 1
