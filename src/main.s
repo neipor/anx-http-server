@@ -569,7 +569,7 @@ find_slot:
     bge respawn_skip         /* Not found, skip */
     ldr x1, =worker_pids
     ldr w2, [x1, x23, lsl #2]
-    cmp w2, w22
+    cmp x2, x22
     beq respawn_worker
     add x23, x23, #1
     b find_slot
@@ -852,6 +852,42 @@ shutdown_next:
     b shutdown_kill_loop
 
 shutdown_cleanup:
+    /* Reap workers so they release the SO_REUSEPORT listen socket before we
+     * exit; otherwise a fast restart can bind under a still-living peer.
+     * The PDEATHSIG installed in worker_routine guarantees any worker that
+     * outlives us is reaped by the kernel regardless, but we still wait a
+     * bounded amount here for a clean handoff. */
+    ldr x22, =worker_count
+    ldr w22, [x22]          /* remaining children to reap */
+    mov x23, #50            /* 50 x 10ms = up to 500ms */
+shutdown_reap_loop:
+    cbz w22, shutdown_reap_done
+    cbz x23, shutdown_reap_done
+    mov x0, #-1             /* wait for any child */
+    mov x1, #0              /* status (unused) */
+    mov x2, #1              /* WNOHANG */
+    mov x8, SYS_WAIT4
+    svc #0
+    cmp x0, #0
+    bgt shutdown_reap_one   /* a child was reaped */
+    blt shutdown_reap_done  /* -ECHILD: no children left */
+    /* -1 = no children left at all, 0 = still running: sleep 10ms */
+    sub sp, sp, #16
+    str xzr, [sp]           /* tv_sec = 0 */
+    ldr x9, =10000000
+    str x9, [sp, #8]        /* tv_nsec = 10ms */
+    mov x0, sp
+    mov x1, #0
+    mov x8, SYS_NANOSLEEP
+    svc #0
+    add sp, sp, #16
+    sub x23, x23, #1
+    b shutdown_reap_loop
+shutdown_reap_one:
+    sub w22, w22, #1
+    b shutdown_reap_loop
+shutdown_reap_done:
+
     /* Unlink PID file */
     mov x0, AT_FDCWD
     ldr x1, =pid_file_path

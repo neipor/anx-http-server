@@ -1,10 +1,13 @@
 /* src/network.s - Network Setup */
+/* Event-driven worker: accept_loop -> conn.s worker_event_loop */
 
 .include "src/defs.s"
 
 .global server_init
 .global accept_loop
 .global connect_to_upstream
+
+.extern worker_event_loop
 
 .text
 
@@ -97,22 +100,39 @@ bind_fail:
 /* accept_loop(listen_fd) */
 accept_loop:
     mov x19, x0             /* x19 = listen_fd */
-    /* Run in single-process mode for stability */
+    /* Thin shim: the worker body lives in worker_routine below */
     b worker_routine
 
 worker_routine:
     /* Worker process starts here after fork() */
     /* sp is already set to the private stack top by clone() */
 
+    /* Die if the master dies (PR_SET_PDEATHSIG=SIGKILL). An orphaned worker
+     * still holding the SO_REUSEPORT listen socket would silently steal
+     * connections from the next instance started on the same port. */
+    mov x0, #PR_SET_PDEATHSIG  /* option */
+    mov x1, #SIGKILL           /* signal */
+    mov x8, SYS_PRCTL
+    svc #0
+    /* Master could have died in the window between clone() and prctl(). */
+    mov x8, SYS_GETPPID
+    svc #0
+    cmp x0, #1                 /* ppid == init => master already gone */
+    bne 1f
+    mov x0, #0
+    mov x8, SYS_EXIT
+    svc #0
+1:
+
     /* Set up stack frame */
     stp x29, x30, [sp, #-16]!
     mov x29, sp
-    
+
     /* Check access_log_path */
     ldr x0, =access_log_path
     ldrb w1, [x0]
-    cbz w1, epoll_init
-    
+    cbz w1, wr_run
+
     /* Open Log File */
     mov x0, AT_FDCWD
     ldr x1, =access_log_path
@@ -124,165 +144,18 @@ worker_routine:
     mov x3, #420            /* 0644 */
     mov x8, SYS_OPENAT
     svc #0
-    
+
     cmp x0, #0
-    blt epoll_init
-    
+    blt wr_run
+
     /* Store in log_fd */
     ldr x1, =log_fd
     str w0, [x1]
 
-epoll_init:
-    /* 1. Create Epoll Instance */
-    mov x0, #0
-    mov x8, SYS_EPOLL_CREATE1
-    svc #0
-    
-    cmp x0, #0
-    blt epoll_create_fail
-    b epoll_create_ok
-    
-epoll_create_fail:
-    /* DEBUG: epoll_create1 failed */
-    mov x0, STDOUT
-    ldr x1, =msg_epoll_create_fail
-    ldr x2, =len_epoll_create_fail
-    mov x8, SYS_WRITE
-    svc #0
-    b worker_exit
-    
-epoll_create_ok:
-    mov x21, x0             /* x21 = epoll_fd - preserved throughout */
-    ldr x1, =epoll_fd
-    str w0, [x1]
-    
-    /* 2. Add Listen Socket to Epoll */
-    sub sp, sp, #16
-    mov w0, EPOLLIN
-    str w0, [sp]
-    str x19, [sp, #8]       /* data.fd = listen_fd */
-    
-    mov x0, x21             /* epfd */
-    mov x1, EPOLL_CTL_ADD
-    mov x2, x19             /* fd */
-    mov x3, sp              /* event ptr */
-    mov x8, SYS_EPOLL_CTL
-    svc #0
-    
-    cmp x0, #0
-    blt epoll_ctl_fail
-    b epoll_ctl_ok
-    
-epoll_ctl_fail:
-    add sp, sp, #16
-    mov x0, STDOUT
-    ldr x1, =msg_epoll_ctl_fail
-    ldr x2, =len_epoll_ctl_fail
-    mov x8, SYS_WRITE
-    svc #0
-    b worker_exit
-    
-epoll_ctl_ok:
-    add sp, sp, #16
-    
-epoll_loop:
-    /* Acquire accept mutex to avoid thundering herd */
-    bl lock_accept_mutex
-
-    /* Blocking accept - each worker handles one connection at a time
-     * Combined with multi-worker prefork model, this is the same
-     * architecture as nginx (worker_connections handled via fork) */
-    sub sp, sp, #32
-    mov w2, #16
-    str w2, [sp]            /* addrlen */
-    
-    mov x0, x19             /* listen_fd */
-    add x1, sp, #16         /* sockaddr */
-    mov x2, sp              /* addrlen ptr */
-    mov x3, #0              /* flags - blocking */
-    
-    mov x8, SYS_ACCEPT4
-    svc #0
-    
-    cmp x0, #0
-    blt accept_retry        /* Error - retry */
-    
-    mov x25, x0             /* client_fd */
-    add sp, sp, #32         /* Restore stack */
-
-    /* Release accept mutex before handling client */
-    bl unlock_accept_mutex
-
-    /* Set SO_RCVTIMEO on client socket to prevent indefinite blocking */
-    sub sp, sp, #16
-    ldr x1, =keepalive_timeout
-    ldr w2, [x1]
-    cbz w2, ka_timeout_skip
-    str x2, [sp]            /* tv_sec = keepalive_timeout */
-    str xzr, [sp, #8]       /* tv_usec = 0 */
-    mov x0, x25             /* client_fd */
-    mov x1, #1              /* SOL_SOCKET */
-    mov x2, #20             /* SO_RCVTIMEO */
-    mov x3, sp              /* timeval ptr */
-    mov x4, #16             /* optlen */
-    mov x8, SYS_SETSOCKOPT
-    svc #0
-ka_timeout_skip:
-    add sp, sp, #16
-
-    /* Handle the client */
-    mov x0, x25
-    bl handle_client
-    b epoll_loop
-
-accept_retry:
-    add sp, sp, #32
-    bl unlock_accept_mutex
-    mov x26, #EINTR
-    neg x26, x26
-    cmp x0, x26
-    beq epoll_loop
-    mov x26, #EAGAIN
-    neg x26, x26
-    cmp x0, x26
-    beq epoll_loop
-    /* Other error - continue looping anyway */
-    b epoll_loop
-
-worker_exit:
-    mov x0, #1
-    mov x8, SYS_EXIT
-    svc #0
-
-/* lock_accept_mutex() - spin-lock using LDAXR/STLXR, yield when contended */
-lock_accept_mutex:
-    ldr x9, =accept_mutex_ptr
-    ldr x9, [x9]            /* shared page ptr */
-    cbz x9, .Llock_skip     /* no mutex allocated, skip */
-.Llock_loop:
-    ldaxr w10, [x9]         /* load exclusive with acquire barrier */
-    cbnz w10, .Llock_wait   /* already locked - wait */
-    mov w10, #1
-    stlxr w11, w10, [x9]   /* store exclusive with release barrier */
-    cbnz w11, .Llock_loop   /* store failed (another CPU grabbed it) - retry */
-.Llock_skip:
-    ret
-.Llock_wait:
-    clrex                   /* clear exclusive monitor */
-    mov x8, #SYS_SCHED_YIELD
-    svc #0
-    ldr x9, =accept_mutex_ptr   /* reload after syscall */
-    ldr x9, [x9]
-    b .Llock_loop
-
-/* unlock_accept_mutex() - store-release 0 to release the mutex */
-unlock_accept_mutex:
-    ldr x9, =accept_mutex_ptr
-    ldr x9, [x9]
-    cbz x9, .Lunlock_skip
-    stlr wzr, [x9]          /* store-release zero */
-.Lunlock_skip:
-    ret
+wr_run:
+    /* Hand off to the event-driven loop in conn.s (never returns) */
+    mov x0, x19             /* x0 = listen_fd */
+    b worker_event_loop
 
 /* connect_to_upstream() -> upstream_fd or -1 */
 connect_to_upstream:

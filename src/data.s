@@ -618,6 +618,7 @@
 .bss
     .align 4
     req_buffer:     .skip 8192
+
     req_path:       .skip 2048
     query_string:   .skip 2048
     path_buffer:    .skip 2048
@@ -652,6 +653,9 @@
     pid_file_path:  .skip 256
     client_accepts_gzip: .skip 4
     serving_gzip:   .skip 4
+    serving_cached: .skip 4    /* 1 = response body comes from the file cache */
+    .align 8
+    cache_hit_ptr:  .skip 8    /* entry ptr for the armed cached response */
     gzip_path_buf:  .skip 2048
     matched_location: .skip 8
     reload_requested: .skip 4
@@ -677,6 +681,7 @@
     .global key_access_log
     .global worker_stack_end
     .global client_accepts_gzip, serving_gzip, gzip_path_buf
+    .global serving_cached, cache_hit_ptr
     .global reload_requested
     .global matched_location
     .global has_range_request, range_start, range_end
@@ -755,3 +760,37 @@
     .align 16
     worker_stack:   .skip 65536
     worker_stack_end:
+
+/* ========================================================================= */
+/* Event-driven connection layer (conn.s) — pool, fd index, buffers          */
+/* ========================================================================= */
+.bss
+    .align 16
+    conn_pool:      .skip CONN_MAX * CONN_SIZE    /* 512 x 32896 bytes */
+    .skip 16                                    /* guard: NEON scan may read
+                                                   up to 12B past a slot      */
+    conn_by_fd:     .skip 65536 * 8               /* fd -> conn pointer */
+    .align 12
+    cache_arena:    .skip CACHE_ENTRIES * CACHE_SLOT       /* 256 x 8192 (2 MiB) */
+    cache_entries:  .skip CACHE_ENTRIES * CACHE_ENTRY_SIZE /* 256 x 64 */
+    .global cache_arena, cache_entries
+    list_buf:       .skip 524288                  /* directory listing body */
+    list_len:       .skip 8
+    epoll_events_big: .skip MAX_EVENTS * 16       /* 128 x 16B events */
+    slow_child_mode: .skip 4                      /* 1 = inside slow-path child */
+    slow_write_failed: .skip 4                    /* child: socket gone, stop sinking */
+    slow_children:  .skip 4                       /* live slow-path children count */
+    date_buf_sec:   .skip 8                       /* cached Date refresh timestamp */
+    cur_conn:       .skip 8                       /* fast path: current conn ptr */
+    .global conn_pool, conn_by_fd, list_buf, list_len
+    .global epoll_events_big
+    .global slow_child_mode, slow_write_failed, slow_children
+    .global date_buf_sec, cur_conn
+
+/* ========================================================================= */
+/* Open-file-descriptor cache (fdcache.s) — per-worker, COW after fork         */
+/* ========================================================================= */
+.bss
+    .align 8
+    fdc_entries:    .skip FDC_ENTRIES * FDC_ENTRY_SIZE /* 256 x 128 = 32 KiB */
+    .global fdc_entries

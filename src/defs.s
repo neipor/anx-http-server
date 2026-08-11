@@ -35,6 +35,12 @@
 .equ SYS_CLONE, 220
 .equ SYS_FORK, 107
 .equ SYS_WAIT4, 260
+.equ SYS_GETPPID, 173
+.equ SYS_PRCTL, 167
+.equ SYS_NANOSLEEP, 101
+.equ SYS_KILL, 129
+.equ PR_SET_PDEATHSIG, 1
+.equ SIGKILL, 9
 
 /* Fcntl */
 .equ F_GETFL, 3
@@ -52,6 +58,7 @@
 .equ MAX_EVENTS, 32
 
 /* Socket Options */
+.equ TCP_NODELAY, 1
 .equ TCP_DEFER_ACCEPT, 9
 .equ IPPROTO_TCP, 6
 .equ SOCK_NONBLOCK, 2048
@@ -105,3 +112,90 @@
 .equ MAP_PRIVATE, 0x02
 .equ MAP_ANONYMOUS, 0x20
 .equ MAP_STACK, 0x20000
+
+/* ========================================================================= */
+/* Event-driven connection layer (conn.s)                                    */
+/* ========================================================================= */
+.equ SYS_EPOLL_PWAIT, 22   /* epoll_pwait: timeout in ms (not pwait2/441) */
+.equ SYS_CLOCK_GETTIME, 113
+.equ EPOLLERR, 0x8
+.equ EPOLLHUP, 0x10
+.equ EPOLLRDHUP, 0x2000
+.equ MAX_EVENTS, 128
+
+/* Connection pool */
+.equ CONN_MAX,        512
+.equ CONN_READ_CAP,   16384
+.equ CONN_OUT_CAP,    16384	/* response head + cached body coalesce into one write */
+.equ CONN_SLOW_MAX,   8        /* max slow-path children per worker */
+
+/* Memory file cache (cache.s) */
+.equ CACHE_ENTRIES,     256
+.equ CACHE_ENTRY_SIZE,  64
+.equ CACHE_HASH_OFF,    0    /* u64 */
+.equ CACHE_MTSEC_OFF,   8    /* u64 st_mtim.tv_sec */
+.equ CACHE_MTNSEC_OFF,  16   /* u64 st_mtim.tv_nsec */
+.equ CACHE_SIZE_OFF,    24   /* u32 st_size */
+.equ CACHE_VALID_OFF,   28   /* u32 1 = occupied */
+.equ CACHE_CONTENT_OFF, 32   /* u64 absolute arena ptr */
+.equ CACHE_SLOT,        16384 /* arena stride (power of two) */
+.equ CACHE_MAX_SIZE,    14848 /* body cap: fits out_buf beside the head */
+/* Open-file-descriptor cache (fdcache.s) - nginx open_file_cache equivalent */
+.equ FDC_ENTRIES,     256
+.equ FDC_ENTRY_SIZE,  128
+.equ FDC_HASH_OFF,    0    /* u64 */
+.equ FDC_MTSEC_OFF,   8    /* u64 st_mtim.tv_sec */
+.equ FDC_MTNSEC_OFF,  16   /* u64 st_mtim.tv_nsec */
+.equ FDC_SIZE_OFF,    24   /* u32 st_size */
+.equ FDC_FD_OFF,      28   /* u32 fd, -1 = empty */
+.equ FDC_REFC_OFF,    32   /* u32 borrow refcount */
+.equ FDC_VALID_OFF,   36   /* u32 1 = occupied */
+.equ FDC_PATH_OFF,    40   /* NUL-terminated path (exact-key check) */
+.equ FDC_PATH_CAP,    80   /* path storage cap; longer paths skip the cache */
+.equ CACHE_PATH_CAP,    1024 /* path storage cap; fills exceeding it skip */
+
+/* Connection states */
+.equ CONN_FREE,       0
+.equ CONN_READ_HEAD,  1
+.equ CONN_WRITE_HEAD, 2
+.equ CONN_WRITE_BODY, 3
+
+/* conn->flags bits */
+.equ CONN_F_KEEPALIVE, 1
+.equ CONN_F_ABORT,     2
+/* fd-cache (fdcache.s): a conn that entered the fast file path sets
+ * CONN_F_FD_CACHED so the completion close-sites hand the fd to the cache
+ * instead of closing. CONN_F_FD_BORROWED marks that the fd came from an
+ * fdc_get HIT (slot recorded in CONN_FDC_SLOT_OFF): the completion must
+ * decrement the borrow via fdc_put_slot, never close. An openat MISS leaves
+ * BORROWED clear: the fd may only be INSERTED at an inline completion where
+ * path_buffer/stat_buffer still belong to this request (sfl_sent_all);
+ * deferred completions (cf_finish/conn_close/sendfile_done) native-close it.
+ * Both flags are cleared at request start (serve_file) and cf_reset. */
+.equ CONN_F_FD_CACHED,  0x40
+.equ CONN_F_FD_BORROWED, 0x80
+.equ CONN_F_FILE_BODY, 4
+.equ CONN_F_PTR_BODY,  8
+
+/* conn struct offsets (base = conn pointer) */
+.equ CONN_STATE_OFF,    0    /* u32 */
+.equ CONN_FD_OFF,       4    /* u32 */
+.equ CONN_FLAGS_OFF,    8    /* u32 */
+.equ CONN_RLEN_OFF,     12   /* u32 */
+.equ CONN_RPOS_OFF,     16   /* u32 */
+.equ CONN_HLEN_OFF,     20   /* u32 */
+.equ CONN_STATUS_OFF,   24   /* u32 */
+.equ CONN_FILE_FD_OFF,  32   /* u32, -1 = none */
+.equ CONN_FILE_OFF_OFF, 40   /* u64 sendfile offset */
+.equ CONN_FILE_REM_OFF, 48   /* u64 sendfile remaining */
+.equ CONN_OUT_LEN_OFF,  56   /* u32 */
+.equ CONN_OUT_POS_OFF,  60   /* u32 */
+.equ CONN_LAST_ACT_OFF, 64   /* u64 last active (seconds) */
+.equ CONN_WPTR_OFF,     72   /* u64 WRITE_BODY source ptr */
+.equ CONN_WLEN_OFF,     80   /* u64 WRITE_BODY total len */
+.equ CONN_WPOS_OFF,     88   /* u64 WRITE_BODY written */
+.equ CONN_FDC_SLOT_OFF, 100  /* u32 fdcache slot index, -1 = none (borrow) */
+.equ CONN_MASK_OFF,     104  /* u32 shadow of the live epoll mask, detects divergence */
+.equ CONN_OUT_BUF_OFF,  128  /* 16384 bytes */
+.equ CONN_READ_BUF_OFF, 16512 /* 16384 bytes */
+.equ CONN_SIZE,         32896
