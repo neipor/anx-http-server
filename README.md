@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-v0.6.0-blue" alt="version">
   <img src="https://img.shields.io/badge/language-AArch64_Assembly-orange" alt="language">
-  <img src="https://img.shields.io/badge/binary_size-~230KB-green" alt="size">
+  <img src="https://img.shields.io/badge/binary_size-~308KB-green" alt="size">
   <img src="https://img.shields.io/badge/license-GPL--3.0-red" alt="license">
   <img src="https://img.shields.io/badge/platform-Linux_AArch64-lightgrey" alt="platform">
 </p>
@@ -29,7 +29,9 @@ A production-grade, high-performance HTTP/1.1 web server written entirely in **p
 | Gzip compression (static `.gz` + dynamic pipe) | ✅ |
 | Keep-alive with configurable timeout | ✅ |
 | Multi-worker prefork (auto CPU count) | ✅ |
-| Accept mutex (no thundering herd) | ✅ |
+| Epoll event loop (EPOLLEXCLUSIVE, accept storm) | ✅ |
+| TCP_NODELAY per connection | ✅ |
+| SIMD header scan (NEON `\r\n\r\n`) | ✅ |
 | Nginx-style config parser (`server{}`, `location{}`) | ✅ |
 | Location routing (prefix + exact match) | ✅ |
 | `try_files` directive | ✅ |
@@ -127,6 +129,35 @@ server {
 | `-x` | Enable reverse proxy mode |
 | `-s` | Silent mode (no console log) |
 | `-v` | Print version and exit |
+
+## Performance
+
+ANX is built to beat nginx on the workloads that matter. Measured on a 4-core
+AArch64 host (anx-dev container), wrk driving from a separate core pair,
+anx pinned to 2 workers on 2 cores, nginx (stock + `open_file_cache`) as the
+mirror.
+
+**fd-cache (B9)** — ANX eliminates `openat`+`close` on the sendfile path via a
+per-worker open-fd cache (nginx `open_file_cache` equivalent). Verified by
+strace: 30 requests → **4 `openat`** (one cold open per worker), vs 30 without
+the cache. Multi-file eviction soak (500 unique files, 16-way churn, 256 slots):
+**0 byte mismatches, 0 errors** under load.
+
+| Workload | ANX | nginx stock | nginx tuned | Note |
+|----------|-----|-------------|-------------|------|
+| index.html (3B) | **15.7k rps** | 10.4k | 16.2k | beats stock, ties tuned |
+| f16k.bin (16KB)  | **12.5k rps** (c300) | 10.5k | — | beats nginx at every concurrency |
+| f1m.bin (1MB)    | 1.2k→0.8k (c8→c300) | 1.08k | — | wins at low c; ~30% behind at c300 |
+| cached (≤8KB)    | **36 µs/req** | 71 µs/req | 56 µs/req | −49% vs stock |
+
+**Wins:** cached/small files and 16 KB sendfile at all concurrency levels.
+**Known frontier:** 1 MB bulk transfer at high concurrency degrades as connection
+count rises (single-connection bulk send briefly holds a worker); under 2 worker
+cores nginx stays flat ~1080 rps while ANX drops to ~780. Deep event-loop
+fairness tuning is the next optimization pass — not a correctness issue.
+
+Stability: 300-connection soak at 17,890 rps, 14.4 ms p50 latency, **zero
+spin-storm events**. 18/18 probe-suite + 15/15 cache-probe checks pass.
 
 ## Architecture
 

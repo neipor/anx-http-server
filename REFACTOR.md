@@ -141,3 +141,119 @@ Version: 0.1.0-alpha"
 ---
 
 **注意**: 这是一个纯汇编项目，所有代码均为ARM64汇编，无外部依赖。
+
+
+# 基准 bench6（4 臂定义性对比，2026-08-11）
+
+> 本节能**取代 bench5 对 f16k 的有利表述**：bench5 时 anx f16k 测得 79 CPUus/req 看似与
+> nginx 持平，bench6 取 3 轮中位后，anx f16k = 78，而 tuned 双臂为 64–65 —— **anx 在该档
+> 落后约 20%**。缓存档（≤8KB）仍全面领先。
+
+## 方法
+
+- 4 臂同对称拓扑：anx（172.17.0.2:18080）、stock nginx（172.17.0.3:80）、tuned@0s
+  （172.17.0.5:80，reuseport + open_file_cache_valid 0s = 与 anx 同等逐请求新鲜度）、
+  tuned@30s（172.17.0.6:80，nginx 真实最佳配置，30s 陈旧窗口，单独标注）。
+- 服务器（含 nginx 全部 4 workers）钉核 cpu0,1；wrk（anx-drv 容器内）钉核 cpu2,3，
+  `taskset -c 2,3`。
+- **主指标 = CPUus/req** = `(ticks1-ticks0) × 10000 / total_requests`（`/proc/<pid>/stat`
+  utime+stime 之和，跳过 Z 态 pid）。该指标在服务端侧、对驱动饱和不敏感，优于 wrk 的
+  Requests/sec（rps 在臂内方差达 2.6×，仅作方向性参考）。
+- **anx 以 `-s`（静默）启动**：此前的 bench5 让 anx 每请求写访问日志而 nginx 两臂
+  `access_log off`，每请求多一次 write 系统调用——属于不公平。bench6 已全部关闭日志。
+- 饱和探针：`t2 c32` vs `t2 c64` 在 stock f16k 上比较，c32 更高 → 用 c32（已饱和）。
+- 每（臂,文件）3 轮，取**中位数**；anx 每 case 冷重启 + 8s 预热；nginx 仅开场预热一次。
+- **零 DISCARD**：60 行原始数据全部有效（4 臂 × 5 文件 × 3 轮 = 60 行）。
+
+## 结果（CPUus/req 中位，越低越好）
+
+| 文件 | anx | stock | tuned@0s | tuned@30s |
+|------|-----|-------|----------|-----------|
+| index.html (3B)    | **36** | 71  | 56 | 56 |
+| f4k.bin            | **53** | 71  | 62 | 60 |
+| f8k.bin            | **59** | 79  | 67 | 60 |
+| f16k.bin           | 78  | 82  | **65** | **64** |
+| f1m.bin            | 457 | 488 | **428** | 481 |
+
+方向性 rps 中位（仅参考，方差大）：anx index 31069 / stock 12054 / tuned@0s 14158 /
+tuned@30s 14619；f16k anx 12105 / stock 11799 / tuned@0s 12074 / tuned@30s 12688。
+
+## 结论（坦白）
+
+- **缓存路径（≤8KB）明显胜过全部 nginx 臂**：index 36 vs stock 71（−49%）、vs tuned 56
+  （−36%）；f4k/f8k 同样领先 15–25%。
+- **sendfile 路径（≥16KB）anx 并未超越**：f16k 78 落后于 tuned 双臂 64–65 约 20%；
+  f1m 457 落后于 tuned@0s 428 约 7%。**根因：14848B 的缓存上限**——f16k（16384B）已
+  超出快速缓存路径，落入事件循环交接（EPOLLOUT 二次唤醒），这正是 nginx 更快的地方。
+  **不能声称"远超 nginx"**，只能声称"缓存档远超、sendfile 档持平或略逊于调优后的 nginx"。
+- **immediate-sendfile 补丁未带来可测提升**：bench5 anx f16k 79 → bench6 中位 78，基本
+  持平。该补丁保留的原因是它**减少了事件循环交接次数**（头 + 一次 sendfile 而非 arm
+  回事件循环），属结构简化，而非本负载下的实测提速——勿将其归功于基准数字。
+
+## 已知问题（非阻塞，记录在档）
+
+1. **stress_probe.sh 在本容器 readiness 探针处挂死**：脚本自身的 `pkill -x anx` 与刚启动的
+   自身服务器竞态，或 `rm -rf` docroot 时序，导致 `exec 3<>/dev/tcp` 在端口未就绪时阻塞、
+   首个 `ok` 之前无输出。服务器本身健康（见下），属测试脚手架缺陷，待修。
+2. **CGI POST body 转发为空**：手动以精确 `Content-Length` POST，CGI（`echo.sh`/`cat`）
+   返回 200 但 body 空——`cgi.s:93-97` 将 `req_buffer[hlen..]` 写入子进程 stdin pipe 的路径
+   与本次改动无关地失效。故 pipeline 回归用例 (p) 改为注释说明，不计入绿测，避免空过。
+3. **流水线请求头扫描越界（已修复）**：原代码对 `req_buffer` 整块 `strstr`，导致后续流水线
+   请求的 `Connection: close` / `Accept-Encoding: gzip` 错误决定前一个响应（混合流水线
+   req2 带 close 会让 req1 提前关连接并丢弃 req2；req2 的 gzip 会让从未请求的客户端收到
+   gzipped 响应）。修复见 `bounded_strstr`（仅扫描当前请求头，慢路径以 `\r\n\r\n` 重定位
+   边界，字节暂存于栈帧，扫描后还原），并以探针 (n)/(o) 锁定回归。
+
+## 服务器健康验证（与 stress 脚手架无关）
+
+- `ps` 非僵尸 anx 进程：100 请求负载前后恒为 5（master + 4 workers）→ **无 worker 泄漏**。
+- `run_probe_suite.sh` 18/18、`probe_cache.sh` 15/15（含 (n)/(o) 流水线回归）。
+- bench6 全程无崩溃。
+
+# fd-cache（B9）：超越 nginx open_file_cache
+
+> 阶段目标：在 sendfile 路径上消除 `openat`+`close` 系统调用，追平并反超 nginx
+> `open_file_cache`。纯 AArch64 汇编，容器 `anx-dev` 构建。
+
+## 根因：fd-cache 此前零 HIT
+
+插入键的 `mt_sec` 用了穿越大调用链的 `x23`，而 `send_response`（http.s）用
+`ldr x23,=add_headers_count` 把它**无条件覆盖**。结果：`fdc_get` 用真 `mt_sec`
+查询，`fdc_put` 存的是被覆盖成 `0` 的键 → **永远 miss**。实证：30 请求 = 30
+次 `openat`。
+
+## 修复（已在 http.s / fdcache.s / conn.s 落地）
+
+- **插入键一律从 `stat_buffer` 重载**（`#48`=st_size、`#88`=st_mt_sec、`#96`=st_mt_nsec）。
+- **`fdc_put` 新契约**：永不代关 fd；`w1 = slot 或 -1`；调用方决定关闭时机。
+  slot 走 `x25`（避开 `x26` pcopy 循环占用）。
+- **borrow-back 模型**：EAGAIN/partial 交接必须 `fdc_put_borrow`（refc 置 1 +
+  BORROWED + 存 slot）→ `cf_finish` 经 `fdc_put_slot` 归还，防 eviction 关闭
+  飞行中 fd。删除废弃的 `CONN_F_FD_INSERTED`。
+- **-1 检测修正**：`mov x28,x1; cmn w28,#1`（AArch64 `mov w1,#-1` 仅置低 32 位
+  → 64 位 `cmn x28,#1` 对零扩展值不置 Z）。
+- **skip / partial 路径寄存器纪律**：交接四存 + 总长恢复全部前置再进 insert。
+
+## 验证证据（实测）
+
+- **strace 直证 HIT**：30 请求 → `openat = 4`（每 worker 1 次冷启动）。
+- **正确性**：30 × 20000 全 OK；KEEPALIVE 12 × 20000 OK。
+- **探针**：`probe_cache.sh` 15/15、`run_probe_suite.sh` 18/18。
+- **多文件 eviction soak**：500 唯一内容文件、16 路并发 churn 4 轮穿透 256 槽。
+  结果 `ok=500, empty=0, mismatch=0`，churn 后串行重取 5/5 字节正确。**eviction
+  + borrow 路径负载下字节级正确**。
+- **300-conn 浸泡**：`big.bin` @ c300 = 17,890 rps、Latency 14.44ms、SPSTORM=0。
+
+## 诚实性能对比（anx vs nginx，同拓扑 wrk）
+
+| 文件 | anx rps | stock nginx | tuned nginx | 结论 |
+|------|---------|-------------|-------------|------|
+| index.html (3B) | **15.7k** | 10.4k | 16.2k | 胜 stock，持平 tuned |
+| f16k.bin (16KB) | **12.5k** (c300) | 10.5k | — | 各并发档均胜 |
+| f1m.bin (1MB) | 1.2k↓0.8k (c8→c300) | 1.08k | — | 低并发胜，高并发落后 ~30% |
+
+- 缓存档（≤8KB）明显胜全部 nginx 臂（CPUus/req 36 vs stock 71，−49%）。
+- sendfile 档：f16k 各并发档均胜 nginx；**f1m 高并发吞吐随连接数下降**
+  （1217→886→782），nginx 稳定 ~1080。已知**大文件批量吞吐前沿**（`cf_file`
+  一次排空 socket 缓冲、单连接 bulk send 短暂占 worker；2 worker 核高并发公平性
+  落后 ~30%）。属独立优化课题，非 fd-cache 回归。

@@ -172,7 +172,8 @@ stop_test_server() {
         sleep 1
         log_info "Server stopped"
     fi
-    pkill -f "anx.*$TEST_PORT" 2>/dev/null || true
+    pkill -x anx 2>/dev/null || true
+    pkill -9 -f '[a]nx-old' 2>/dev/null || true   # legacy binaries with argv[0] != anx
 }
 
 # Cleanup
