@@ -1,4 +1,4 @@
-# Makefile for ANX Web Server v0.5.0
+# Makefile for ANX Web Server v0.6.0
 # High-Performance AArch64 Assembly HTTP/1.1 + HTTP/2 + WebSocket Server
 
 # Toolchain

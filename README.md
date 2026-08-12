@@ -197,11 +197,24 @@ src/
 `socket` · `bind` · `listen` · `accept4` · `connect` · `read` · `write` · `openat` · `close` · `sendfile` · `clone` · `wait4` · `getdents64` · `mmap` · `mprotect` · `sched_yield` · `pipe2` · `dup3` · `execve` · `kill` · `setsockopt` · `epoll_create1` · `epoll_ctl` · `epoll_pwait` · `newfstatat` · `exit_group`
 
 ## License
-MIT
+GPL-3.0
 
 ## Version History
 
-### v0.5.1 (Current)
+### v0.6.0 (Current)
+**Performance, Security & Stability Pass**
+
+- fd-cache (B9): per-worker open-fd cache eliminates `openat`+`close` on the
+  sendfile path (nginx `open_file_cache` equivalent); strace 30 req → 4 openat,
+  500-file eviction soak byte-exact
+- Security audit (empirical): traversal / encoded-path / oversized CL /
+  slowloris / header injection all absorbed; workers stable
+- Large-file fairness: `SF_CHUNK=256KB` sendfile cap lifts f1m c64 +17% vs
+  nginx in controlled back-to-back
+- `probe_cache` 15/15 deterministic (isolated (m) instance);
+  `run_probe_suite` 18/18
+
+### v0.5.1
 **Stability & Completeness Pass**
 
 - Range/206: fixed `.asciz` null-termination for header matching; fixed double-CRLF header corruption

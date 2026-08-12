@@ -11,3 +11,6 @@ nohup.out
 tests/results/
 tests/utils/results/
 tests/data/
+
+# Per-run test log
+/tests/test.log
