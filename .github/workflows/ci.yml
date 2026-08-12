@@ -5,6 +5,7 @@ name: ANX CI
 on:
   push:
     branches: [ main, master, "refactor/*" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ main, master ]
 
